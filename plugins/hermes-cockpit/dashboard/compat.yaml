@@ -1,0 +1,23 @@
+# compat.yaml — 插件对宿主的兼容声明（D10 / S8）
+
+# 宿主 = Hermes Agent 本体。
+# 本文件被 host_adapter.compat_status() 读取，启动时校验一次（失败缓存，不每轮读盘）。
+#
+# 判定结果（三条判据，不是二选一）：
+#   ① 面板顶部出现黄色横幅，写明宿主版本与兼容区间
+#   ② 写入口全部禁用（新建/编辑任务、会话归类、新建会话）
+#   ③ 宿主仍能正常启动（fail-open，插件异常绝不拖垮宿主）
+#
+# 宿主人读入口：hermes --version 或 %LOCALAPPDATA%\hermes\gateway_state.json 的 code_version
+
+host: hermes
+
+# 当前已验证可用的宿主版本区间。
+# 实测基线：0.23.2（gateway_state.json code_version）
+min_version: "0.20.0"
+max_version: "0.99.99"
+
+# 不匹配时的行为：
+#   readonly = 降级为只读（推荐，用户仍能查看看板/会话/任务）
+#   disabled = 完全停用
+on_mismatch: readonly

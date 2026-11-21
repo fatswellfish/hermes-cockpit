@@ -1,0 +1,41 @@
+# META.yaml — Hermes Cockpit 自有配置（唯一写入口，人可直读）
+# 结构定义见 DD-001 §五。所有字段不得被插件之外的程序改写。
+# 本环境无 PyYAML 依赖时，host_adapter.load_compat 提供极简解析；本文件保持扁平结构以便直读。
+
+setup:
+  # pending = 未走引导；done = 已完成
+  status: pending
+  # fresh = 从零开始（只看插件安装后的会话）；imported = 导入已有（全量视野）；null = 未选
+  # 注意：单向，不提供 imported -> fresh 反向切换（setup.at 写一次永不改变）
+  mode: null
+  # ISO8601，首次完成引导那一刻的时间戳；fresh 作用域的比较基准。
+  # 写入后永不改变。见 DI-001 D12。
+  at: null
+
+unclassified_slug: 未分类
+
+categories:
+  - 办公事务
+  - 审核流程
+  - 家庭提醒
+  - Hermes 开发
+  - 内容生产
+
+# 项目 -> 分类（一个项目只属于一个分类；未列入的归 unclassified_slug）
+project_categories: {}
+
+# 会话 -> 项目映射。D4 的「确认」与 D8 的「手动标」共用这一份。
+# 优先级：manual > cwd 命中 > 关键词建议（未确认一律视为无归属）
+# source 三值语义（不可与 setup.mode 的 imported 混用）：
+#   manual            = 用户在面板里手动指定
+#   import-confirmed  = 首启引导「导入已有」并逐条确认后写入
+#   suggested-confirmed = 关键词/模型给出建议、用户点了确认
+session_map:
+
+  s1: {project: demo, source: manual, at: "2026-11-22T00:15:52+08:00"}
+  old: {project: demo, source: manual, at: "2026-11-22T00:15:52+08:00"}
+reminders:
+  # D7 的唯一开关。控制 hook 是否注入项目上下文；
+  # 关 = 不注入 = 无从判断跑题 = 不提醒。
+  # skill 规则是静态文本，运行期不可卸载，所以只有这一个开关。
+  enabled: false
