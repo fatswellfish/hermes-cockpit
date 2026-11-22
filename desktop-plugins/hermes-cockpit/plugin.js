@@ -555,18 +555,21 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
   }, [data, selected])
 
   const onToggle = useCallback(async (task, s) => {
+    // 并发戳来自 /overview 的 stamp（(lstat, sha256) 二元组）。
+    // 不带它后端一律 428 拒绝盲写；带错了 409 stale → postJSON 会提示并自动刷新。
+    const stamp = data && data.stamp
     const r = await postJSON('/tasks/toggle', {
       id: task.id,
       subtask_id: s.id,
-      done: !s.done
-      // 不猜文件戳：expect_mtime 必须来自磁盘真值，猜出来的戳只会制造 409
+      done: !s.done,
+      expect_mtime: stamp
     }, reload)
     if (r.ok) {
       reload()
     } else if (r.code === 428) {
-      host.notify({ kind: 'error', message: '缺少文件戳（expect_mtime）：后端 /overview 未下发 stamp，无法安全写入' })
+      host.notify({ kind: 'error', message: '缺少文件戳：/overview 没下发 stamp，无法安全写入' })
     }
-  }, [reload])
+  }, [data, reload])
 
   return jsxs('div', {
     className: 'flex h-full w-[20rem] shrink-0 flex-col overflow-y-auto px-2 py-2',

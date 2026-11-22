@@ -25,6 +25,7 @@
  * 退出码：全通过 0，有失败 1。
  */
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -335,6 +336,38 @@ if (def) {
     assert.equal(reloaded, 0, '成功路径不该触发 stale reload')
     return 'ok=true，data 透传，未误触发 reload'
   })
+
+  await check('⑥d 勾选子任务真的带上 expect_mtime（不带则后端一律 428）', () => {
+    // 这是实测踩过的死链：/overview 不下发戳时前端无戳可传，勾选功能整个是死的。
+    // 所以这里同时验两头：前端请求体里有 expect_mtime，后端 /overview 里有 stamp。
+    const toggleBody = SRC.slice(SRC.indexOf("postJSON('/tasks/toggle'"),
+                                 SRC.indexOf("postJSON('/tasks/toggle'") + 400)
+    assert.ok(/expect_mtime:\s*stamp/.test(toggleBody.replace(/\n\s*/g, ' ')),
+              "勾选请求体里没有 expect_mtime —— 后端会 428 拒绝盲写")
+    assert.ok(/const stamp = data && data\.stamp/.test(SRC.replace(/\n\s*/g, ' ')),
+              "戳没有从 /overview 的 data.stamp 取")
+    return '请求体带 expect_mtime: stamp，戳源为 data.stamp'
+  })
+
+  await check('⑥e 后端 /overview 真的下发 stamp（跑真后端取一次）', () => {
+    const py = 'C:/Users/Martin WANG/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe'
+    const REPO = path.resolve(HERE, '..', '..')
+    const out = execFileSync(py, ['-c', [
+      'import sys, json',
+      `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/hermes-cockpit/dashboard")`,
+      `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/hermes-cockpit/core")`,
+      'import plugin_api as api',
+      'status, payload = api._handle_route("GET", "/overview", {})',
+      'print(json.dumps({"status": status, "has_stamp": bool(payload.get("stamp")), ' +
+      '"len": len(payload.get("stamp") or [])}))'
+    ].join('\n')], { encoding: 'utf8' })
+    const res = JSON.parse(out.trim().split('\n').pop())
+    assert.equal(res.status, 200)
+    assert.equal(res.has_stamp, true, '/overview 没下发 stamp —— 勾选功能会 428')
+    assert.equal(res.len, 2, 'stamp 必须是 (ident, sha256) 二元组')
+    return 'status=200，stamp 存在且为二元组'
+  })
+
 
   globalThis.fetch = realFetch
 }

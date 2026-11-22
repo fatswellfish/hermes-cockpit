@@ -136,6 +136,23 @@ F1 边界扫描脚本 / A1 数据访问层测试 / A2 任务解析器
 任务书：`C:\Users\Martin WANG\AppData\Local\hermes\cache\scratch\coder-brief-r1.md`
 reviewer 任务书：`...\reviewer-brief-r1.md`
 
+## C 模块（桌面三栏）第五轮产出（2026-11-22 11:1x）
+
+**文件**：`desktop-plugins/hermes-cockpit/plugin.js`（819 行）+ `__check.mjs` + `__render_check.mjs`
+
+**后端 `/overview` 扩了 4 个字段**（前端要用，改了就得同步 `tests/test_store.py` 的字段集合断言）：
+`projects[].path` / `assigned_sessions[]`（带 project 与 via: cwd|manual）/ `orphan_tasks[]` /
+`stats.{unassigned_sessions, assigned_sessions, orphan_tasks}`。
+`session_map` 人工归类现在**真的生效**（manual > cwd），此前只是写进 META.yaml 没人读。
+
+**实测数据**：14 项目 / 1503 会话 / 24 已归属 / 1479 未归属 / 2 任务（均为孤儿）/ 14 看板，payload 301KB。
+
+**验证**：`pytest` 173 passed · `check_boundary.py` exit 0 · `__check.mjs` 14/14 · `__render_check.mjs` 11/11。
+
+**★ 桩测试的三个坑（下次别重踩）**：
+`module.register` 的 loader 跑在独立 worker，① 拿不到主线程 globalThis；② `{data}` 走 structuredClone，函数传不过去、普通对象还会退化；③ 生成的桩模块是独立作用域，引用 loader 变量即 ReferenceError。
+⇒ 桩源码必须**自包含**（每个导出直接内联函数体）。
+
 ## 未解决 / 待办
 
 - **bot 端点配置过期**：属管理员 bot 职责，主 bot 只出清单（已记入 `TASKS.md` T-002）

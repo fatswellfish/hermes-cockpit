@@ -382,6 +382,22 @@ def _root(request_root: str | None = None) -> Path:
 # `handle(method, path, body) -> dict`（见本仓 PLUGIN-API-约定.md 与现役 todo-panel）。
 # 所以同一个逻辑层出两种入口，「上层写在哪个函数里」不影响任何一条判据。
 
+def _overview_with_stamp(root: Path) -> dict:
+    """overview() + 并发戳。
+
+    戳必须在**这一层**附加，不能进 store.overview()：store 是纯只读聚合层，
+    不该引 fileio 的写路径依赖（S10 边界）。而写端点校验用的正是
+    `_read_tasks_with_stamp()` 返回的同一个戳，两边同源才不会自相矛盾的 409。
+    """
+    payload = store.overview(root)
+    try:
+        _, _, stamp = _read_tasks_with_stamp(root)
+        payload["stamp"] = list(stamp)
+    except ApiError:
+        payload["stamp"] = None      # 没有 TASKS.md：前端会拿到 428 并给出明确提示
+    return payload
+
+
 def _handle_route(method: str, path: str, body: dict | None) -> tuple[int, dict]:
     """把 (method, path, body) 路由到一个返回 (HTTP 状态码, dict) 的处理。"""
     m = (method or "GET").upper()
@@ -389,7 +405,7 @@ def _handle_route(method: str, path: str, body: dict | None) -> tuple[int, dict]
     b = body or {}
 
     if m == "GET" and p == "/overview":
-        return _handle(lambda: store.overview(_root(b.get("root"))))
+        return _handle(lambda: _overview_with_stamp(_root(b.get("root"))))
 
     if m == "POST" and p in ("/tasks/toggle", "/tasks/add", "/tasks/update"):
         def run_tasks():
@@ -480,8 +496,10 @@ def _handle(fn):
 if router is not None:                      # pragma: no cover - 需要 fastapi
 
     @router.get("/overview")
-    def overview():
-        status, payload = _handle(lambda: store.overview(_root()))
+    def overview(request: Request, root: str | None = None):
+        # root 允许由外部指定（测试沙盒与多项目根场景）；不传就走默认根
+        status, payload = _handle(lambda: _overview_with_stamp(
+            _root(root or request.query_params.get("root"))))
         return JSONResponse(payload, status_code=status)
 
     @router.post("/tasks/toggle")

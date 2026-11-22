@@ -88,7 +88,10 @@ class _Sandbox:
             con.close()
 
     def get(self, path, **kw):
-        return self.client.get(f"/api/plugins/hermes-cockpit{path}", **kw)
+        # root 显式指定：/overview 也要读沙盒那份 TASKS.md，不能读本仓真实的（戳会错位）
+        params = dict(kw.pop("params", None) or {})
+        params.setdefault("root", str(self.root))
+        return self.client.get(f"/api/plugins/hermes-cockpit{path}", params=params, **kw)
 
     def post(self, path, body=None, headers=None):
         payload = dict(body or {})
@@ -136,6 +139,40 @@ class TestOverview(unittest.TestCase):
         for key in ("projects", "unassigned_sessions", "stats", "setup", "scope", "warnings"):
             self.assertIn(key, data)
         self.assertIsInstance(data["warnings"], list)
+
+    def test_overview_ships_a_usable_stamp(self):
+        """回归：/overview 必须下发 stamp，且**拿它就能写**。
+
+        缺陷形态（实测踩过）：以前 /overview 不带戳，前端勾子任务只能不带 expect_mtime，
+        后端一律 428 拒绝盲写 —— 勾选功能整个是死的，而测试因为直接调 sb.stamp()
+        绕过了 HTTP，一直没暴露。
+        """
+        ov = self.sb.get("/overview").json()
+        self.assertIn("stamp", ov, "/overview 没有下发 stamp —— 前端将无法安全写入")
+        self.assertIsInstance(ov["stamp"], list)
+        self.assertEqual(len(ov["stamp"]), 2, "戳必须是 (ident, sha256) 二元组")
+
+        # 用 overview 给的戳真的写一次，必须 200
+        tasks = ov.get("orphan_tasks") or []
+        target = None
+        for t in tasks:
+            for s in t.get("subtasks") or []:
+                target = (t["id"], s["id"], not s["done"])
+                break
+            if target:
+                break
+        self.assertIsNotNone(target, "沙盒里没有可勾的子任务")
+
+        r = self.sb.post("/tasks/toggle", {"id": target[0], "subtask_id": target[1],
+                                           "done": target[2], "expect_mtime": ov["stamp"]})
+        self.assertEqual(r.status_code, 200, f"用 /overview 的戳写不进去：{r.text}")
+
+        # 写完后戳必须变，旧戳必须 409（并发保护仍然有效）
+        ov2 = self.sb.get("/overview").json()
+        self.assertNotEqual(ov2["stamp"], ov["stamp"], "写盘后戳没变 —— 并发保护失效")
+        r2 = self.sb.post("/tasks/toggle", {"id": target[0], "subtask_id": target[1],
+                                            "done": target[2], "expect_mtime": ov["stamp"]})
+        self.assertEqual(r2.status_code, 409, f"旧戳居然还能写：{r2.text}")
 
 
 class TestTaskWrites(unittest.TestCase):
