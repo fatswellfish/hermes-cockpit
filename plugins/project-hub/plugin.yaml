@@ -1,4 +1,4 @@
-id: hermes-cockpit
+id: project-hub
 name: Hermes Cockpit
 version: 0.1.0
 description: >
@@ -11,7 +11,7 @@ license: MIT
 api: dashboard/plugin_api.py
 
 # 桌面端入口
-desktop: ../../desktop-plugins/hermes-cockpit/plugin.js
+desktop: ../../desktop-plugins/project-hub/plugin.js
 
 # 兼容声明：宿主版本区间，由 host_adapter.compat_status() 读取
 compat: dashboard/compat.yaml

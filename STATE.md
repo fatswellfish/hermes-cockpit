@@ -283,3 +283,56 @@ reviewer 任务书：`...\reviewer-brief-r1.md`
 
 `DD-001 §六` 的 **S1–S19 全绿**才算第一版完成，不接受部分通过。
 S 项 → 主责模块对应表见 `WBS-001` 末尾。
+
+---
+
+## 2026-11-23 00:2x —— 本轮突破（对外交付前必读）
+
+### 用户要求（原话）
+> 「我要睡觉了，你今晚一定要把这个插件搞定，并且上传github，我这边需要明天用这套系统，你测试好奥，发烟测试，点击测试，视觉测试都要到位」
+
+### 两个真根因（都已修）
+
+**① 取数字面量是相对路径 → 打包版必坏**
+桌面 App 页面是 `file:///.../app.asar.unpacked/dist/index.html`，裸 `fetch('/api/plugins/...')`
+被当成本地文件 → `net::ERR_FILE_NOT_FOUND`。这就是「读不到清单 / Failed to fetch」的真因，**后端一直是好的**。
+已加 `apiFetch()`：优先 `window.hermesDesktop.api({path, method, body, priority:'foreground'})`（Electron IPC，
+与协议无关），返回 fetch Response 形状，上层 409/403/428 分支零改动；无 electron 时回落 fetch。
+> `ctx.rest` **不存在**（曾在别处写错过），真实通道只有 `window.hermesDesktop.api`。
+> 排查口诀：插件取数失败先开 DevTools ▸ Network，看到 `ERR_FILE_NOT_FOUND` 就是相对路径写法错了，
+> 别去查端口 / 鉴权 / 路由。
+
+**② 插件 id 被一次 duplicate 冲突永久污染**
+23:20 一个临时副本 `__cockpit_tmp` 和正式插件同 id → `duplicate id "hermes-cockpit"` → 加载失败。
+之后**即使删掉副本、文件字节完全正确、reload 多次，`hermes-cockpit` 也不再出现入口**；
+把同一份代码改名成 `zz-probe` 立刻出现 ⇒ 结论是 **id 本身被卡住，reload 不自清**。
+处置：**全局改名为 `project-hub`**（三处 id 必须一致）：
+- `plugins/project-hub/plugin.yaml` → `id: project-hub`
+- `desktop-plugins/project-hub/plugin.js` → `const ID = 'project-hub'`
+- `plugins/project-hub/dashboard/manifest.json` → `"name": "project-hub"`
+- `scripts/install.sh` 的 PLUG_SRC/PLUG_DST/DESK_SRC/DESK_DST 同步
+
+> 铁律：桌面插件 id 一旦被污染，**换名比修复快**；发布后不要复用旧 id。
+
+### 桌面侧重扫机制（实测）
+- `runtime-loader.ts`：`DISK_POLL_MS = 5000`，但**仅当 `document.visibilityState === 'visible'` 才轮询**；
+  `watchDirectory` 成功时完全走文件事件，不走轮询。
+- 手动 rescan = 命令面板（**Ctrl+K**）→ 输入 `reload plugin` → 选 **Reload desktop plugins**（→ `discoverRuntimePlugins()`）。
+  这条命令可靠；**不要靠按 F12/像素点 DevTools 去操作**（AX 树常只返回外壳，实测多轮无变化）。
+
+### 当前卡点（唯一，重启网关即解）
+界面报 `404: {"detail":"Plugin not found"}`。
+原因：**Python 插件模块只在网关进程启动时导入一次**，改目录名后旧进程里没有
+`/api/plugins/project-hub/`。后端代码本身已验（进程内 8 条路由、14 项目 / 1516 会话 / 2 任务 / 14 看板全对）。
+解：`python scripts/restart_gateway.py`（先 `--dry-run`），会断开当前会话。
+
+### 重启后按序做
+1. `python cache/scratch/probe_ph.py` + App 里点「项目中枢」确认不再 404
+2. 三层测试：发烟（`__check.mjs` / `__render_check.mjs` / pytest / `check_boundary.py`）、
+   点击（切项目 / 新建会话 / 勾任务 / 会话归类）、视觉（截图 + 27B `http://192.168.31.128:8006/v1`，model `qwen3.8-27b`）
+3. 上传 GitHub
+
+### 未解的既有问题（不影响明天用）
+项目表 14 个 slug 多为自动名（`project` / `project-2` / `project-12`…），且**不含 `hermes-cockpit`** ⇒
+`TASKS.md` 里 `proj: hermes-cockpit` 的 T-001/T-002 落在「未归属任务」组（界面已单列，不会消失）。
+

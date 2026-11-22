@@ -19,10 +19,10 @@ else
   REPO_NATIVE="$REPO"
 fi
 HOST_HOME="${HERMES_HOME:-$HOME/AppData/Local/hermes}"
-PLUG_SRC="$REPO/plugins/hermes-cockpit"
-PLUG_DST="$HOST_HOME/plugins/hermes-cockpit"
-DESK_SRC="$REPO/desktop-plugins/hermes-cockpit"
-DESK_DST="$HOST_HOME/desktop-plugins/hermes-cockpit"
+PLUG_SRC="$REPO/plugins/project-hub"
+PLUG_DST="$HOST_HOME/plugins/project-hub"
+DESK_SRC="$REPO/desktop-plugins/project-hub"
+DESK_DST="$HOST_HOME/desktop-plugins/project-hub"
 
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1

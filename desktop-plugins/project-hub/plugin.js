@@ -13,8 +13,52 @@ import { host, Tip, cn, SIDEBAR_NAV_AREA, PALETTE_AREA, ROUTES_AREA } from '@her
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 
-const ID = 'hermes-cockpit'
+const ID = 'project-hub'
 const API = `/api/plugins/${ID}`
+
+/**
+ * 桌面插件的取数通道。
+ *
+ * ⛔ 绝不能用裸 fetch 打相对路径（例如引号里直接写 /api/plugins/...）：
+ * 打包版桌面 App 的页面是 `file:///.../app.asar.unpacked/dist/index.html` 协议
+ * （没有 dev server），相对路径会被当成**本地文件**去找，得到
+ * `net::ERR_FILE_NOT_FOUND`，界面显示「读不到清单 / Failed to fetch」，
+ * 而后端其实完全正常（DevTools ▸ Network 里一眼可见）。
+ *
+ * 真实通道是 preload 暴露的 `window.hermesDesktop.api({ path, method?, body?, priority? })`
+ * （Electron IPC，与页面协议无关；App 内核自己也用它 —— src/api/client.ts 的 hermesApi）。
+ *
+ * 本函数把 IPC 结果**包装成 fetch Response 的形状**（ok / status / json()），
+ * 这样上层的错误分支（409 stale / 403 越界 / 428 缺戳）一个字都不用改。
+ */
+async function apiFetch(path, { method = 'GET', body } = {}) {
+  const bridge = globalThis.window && globalThis.window.hermesDesktop
+
+  if (!bridge || typeof bridge.api !== 'function') {
+    // 浏览器标签页形态（没有 Electron preload）：退回 fetch。此时页面是 http/https，相对路径可用。
+    const r = await fetch(path, {
+      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      method
+    })
+    return { json: () => r.json(), ok: r.ok, status: r.status }
+  }
+
+  // IPC 通道：非 2xx 会 reject，错误里带 status 与响应体，这里统一翻译回 Response 形状。
+  try {
+    const data = await bridge.api({ body, method, path, priority: 'foreground' })
+    return { json: async () => data, ok: true, status: 200 }
+  } catch (e) {
+    const status = Number(e && (e.status || e.statusCode)) || 0
+    const payload = (e && (e.body || e.payload || e.data)) || null
+    const detail = (e && (e.message || e.error)) || String(e)
+    return {
+      json: async () => (payload && typeof payload === 'object' ? payload : { detail }),
+      ok: false,
+      status
+    }
+  }
+}
 const POLL_MS = 4000
 const WARN = '#d9534f'
 
@@ -35,7 +79,7 @@ function useOverview(intervalMs) {
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/overview`)
+      const r = await apiFetch(`${API}/overview`)
       const j = await r.json()
       // 后端两种错误形态：REST 的 {detail} 与 handle() 的 {ok:false, error}
       if (!r.ok || (j && j.ok === false)) {
@@ -72,10 +116,9 @@ function useOverview(intervalMs) {
 async function postJSON(path, body, onStale) {
   let r, j
   try {
-    r = await fetch(`${API}${path}`, {
+    r = await apiFetch(`${API}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {})
+      body: body || {}
     })
   } catch (e) {
     return { ok: false, code: 0, message: `网络错误：${(e && e.message) || e}` }
