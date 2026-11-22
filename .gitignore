@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.tmp
+
+# ── 个人数据：不入库 ──────────────────────────────────────────
+# 这三个是本机真实数据（会话归类、任务内容、开发状态），含个人路径与会话 ID，
+# 不适合随代码分发。仓库里只保留 *.example.* 模板，新机器复制即可：
+#   cp META.example.yaml META.yaml && cp TASKS.example.md TASKS.md
+META.yaml
+TASKS.md
+STATE.md
+
