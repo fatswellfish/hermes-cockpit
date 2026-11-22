@@ -79,6 +79,33 @@ app.include_router(router, prefix=f"/api/plugins/{name}", ...)
 ⇒ 本项目 `plugin_api.py` **必须导出 `router`**。`handle()` 可保留作纯函数测试入口，
 但**不能只给 `handle()`**。当前实现两者都有（已验证 `router` 是真 `APIRouter`，8 条路由正常注册）。
 
+**已顺手修掉 `todo-panel`**（补 `router` 外壳 + `manifest.json` + `from fastapi import APIRouter`），
+实测其 router 已是真 `APIRouter`、3 条路由注册成功。这是修既成事实的坏件，不是改设计。
+
+## 两套插件体系不可混淆（实测 `web_server_dashboard.py:651` + `sdk/runtime.ts`）
+
+| 体系 | 位置 | manifest | 后端 | 前端 |
+|---|---|---|---|---|
+| **Web dashboard** | `plugins/<name>/dashboard/` | **`manifest.json`**（不是 plugin.yaml） | `plugin_api.py` 导出 **`router`** | `entry: dist/index.js`（**纯 IIFE，无构建步骤**，用 `window.__HERMES_PLUGIN_SDK__`） |
+| **Desktop (Electron)** | `desktop-plugins/<name>/` | 无 | 复用上面那个 | 单文件 `plugin.js`，可 `import '@hermes/plugin-sdk'` |
+
+**desktop 插件能直接 import 的原因**（`sdk/runtime.ts`）：运行时加载器用 blob shim 重写裸模块说明符。
+```js
+cached ??= {
+  '@hermes/plugin-sdk': shimUrl('__HERMES_PLUGIN_SDK__'),
+  'react/jsx-runtime':  shimUrl('__HERMES_REACT_JSX__'),
+  react:                shimUrl('__HERMES_REACT__')
+}
+```
+
+**发现规则**（`web_server_dashboard.py:651`）：只找 `child / "dashboard" / "manifest.json"`。
+`plugin.yaml` 对 dashboard 发现**无效**——所以两个都得有：
+- `dashboard/manifest.json` → 让 web dashboard 发现并挂载 router
+- `plugin.yaml` → 供 `hermes` CLI 插件体系识别（hook/tool 用）
+- `desktop-plugins/<name>/plugin.js` → Electron 前端
+
+
+
 ## 测试污染事件（已修复）
 
 `META.yaml` 一度被写成 `status: done / mode: fresh / at: <时间>`，

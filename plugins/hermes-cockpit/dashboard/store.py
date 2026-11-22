@@ -237,20 +237,41 @@ def overview(root: str | os.PathLike | None = None,
     board_slugs = {b["slug"] for b in boards}
     card_cache: dict[str, int] = {}
 
+    # 人工归类（META.yaml 的 session_map）优先于 cwd 规则：manual > cwd 命中。
+    # 读不到就当没有 —— 归类是增强不是前置条件，不能因为它让 overview 整体失败。
+    try:
+        manual_map = meta_mod.session_map(meta_path(root)) or {}
+    except Exception:                   # noqa: BLE001 - 配置坏了也要能看数据
+        manual_map = {}
+
     # 会话 → 项目
     per_project_sessions: dict[str, list[dict]] = {p["slug"]: [] for p in projects}
     unassigned: list[dict] = []
+    assigned_sessions: list[dict] = []
     for s in sessions:
-        slug = assign_session(s.get("cwd"), projects)
+        sid = s.get("id")
+        manual = (manual_map.get(sid) or {}).get("project")
+        slug = manual if manual in per_project_sessions else assign_session(s.get("cwd"), projects)
         if slug is None:
             unassigned.append({
-                "id": s.get("id"),
+                "id": sid,
                 "cwd": s.get("cwd"),
+                "title": s.get("title"),
                 "started_at": ha.to_epoch(s.get("started_at")),
                 "last_activity": ha.to_epoch(s.get("updated_at")) or ha.to_epoch(s.get("started_at")),
+                "via": None,
             })
         else:
             per_project_sessions[slug].append(s)
+            assigned_sessions.append({
+                "id": sid,
+                "cwd": s.get("cwd"),
+                "title": s.get("title"),
+                "project": slug,
+                "via": "manual" if (manual == slug) else "cwd",
+                "started_at": ha.to_epoch(s.get("started_at")),
+                "last_activity": ha.to_epoch(s.get("updated_at")) or ha.to_epoch(s.get("started_at")),
+            })
 
     # 任务 → 项目（按 TASKS.md 的 proj:<slug>）
     per_project_tasks: dict[str, list[dict]] = {}
@@ -260,6 +281,7 @@ def overview(root: str | os.PathLike | None = None,
             per_project_tasks.setdefault(proj, []).append(t)
 
     out_projects = []
+    known_slugs = {p["slug"] for p in projects}
     for p in projects:
         slug = p["slug"]
         sess = per_project_sessions.get(slug, [])
@@ -269,6 +291,7 @@ def overview(root: str | os.PathLike | None = None,
         out_projects.append({
             "slug": slug,
             "name": p.get("name") or slug,
+            "path": p.get("path"),
             "session_count": len(sess),
             **_task_counts(per_project_tasks.get(slug, [])),
             "board_slug": board_slug,
@@ -276,14 +299,27 @@ def overview(root: str | os.PathLike | None = None,
             "last_activity": max(stamps) if stamps else None,
         })
 
+    # 未归属任务：slug 不匹配任何项目 → 它在 task_count 里，却不显示在任何项目下，
+    # 界面必须单列，否则用户以为任务丢了。project 为空的同样算未归属。
+    orphan_tasks = [t for t in tasks if (t.get("project") or "") not in known_slugs]
+
     return {
         "projects": out_projects,
         "unassigned_sessions": unassigned,
+        "assigned_sessions": assigned_sessions,
+        "orphan_tasks": [{"id": t["id"], "title": t.get("title"),
+                          "status": t.get("status"), "progress": t.get("progress"),
+                          "project": t.get("project"), "blocker": t.get("blocker"),
+                          "subtasks": t.get("subtasks") or []}
+                         for t in orphan_tasks],
         "stats": {
             "projects": len(projects),
             "sessions": len(sessions),
             "tasks": len(tasks),
             "boards": len(boards),
+            "unassigned_sessions": len(unassigned),
+            "assigned_sessions": len(assigned_sessions),
+            "orphan_tasks": len(orphan_tasks),
         },
         "setup": {"status": setup.get("status"), "mode": setup.get("mode"),
                   "at": setup.get("at")},

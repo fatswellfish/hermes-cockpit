@@ -1,0 +1,12 @@
+{
+  "name": "hermes-cockpit",
+  "label": "项目中枢",
+  "description": "把项目 / 会话 / 任务 / 看板四层聚合为一屏：左项目、中会话、右任务。只读聚合上游，写只写自有 Markdown。",
+  "icon": "Layout",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/cockpit",
+    "position": "end"
+  },
+  "api": "plugin_api.py"
+}

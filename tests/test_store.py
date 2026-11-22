@@ -26,8 +26,11 @@ import store  # noqa: E402
 import taskfile as tf  # noqa: E402
 import check_boundary as cb  # noqa: E402
 
-PROJECT_KEYS = {"slug", "name", "session_count", "task_count", "task_doing", "task_blocked",
+PROJECT_KEYS = {"slug", "name", "path", "session_count", "task_count", "task_doing", "task_blocked",
                 "board_slug", "board_cards", "last_activity"}
+
+# 会话条目字段（C 模块三栏要用 title 显示、via 显示归属依据：manual / cwd）
+SESSION_KEYS = {"id", "cwd", "title", "started_at", "last_activity"}
 
 
 class TestOverviewRealHost(unittest.TestCase):
@@ -60,12 +63,36 @@ class TestOverviewRealHost(unittest.TestCase):
         ov = store.overview(setup=self.setup)
         self.assertTrue(ov["unassigned_sessions"], "unassigned_sessions 为空 —— 归属规则可能把一切都硬塞进项目")
         for s in ov["unassigned_sessions"]:
-            self.assertEqual(set(s), {"id", "cwd", "started_at", "last_activity"})
+            self.assertEqual(set(s), SESSION_KEYS | {"via"})
+            self.assertIsNone(s["via"], "未归属的会话不该有归属依据")
+
+    def test_assigned_sessions_carry_project_and_via(self):
+        """C 模块中栏：按项目过滤会话，必须能拿到 project；via 说明依据是 cwd 还是人工归类。"""
+        ov = store.overview(setup=self.setup)
+        self.assertGreaterEqual(len(ov["assigned_sessions"]),
+                                sum(p["session_count"] for p in ov["projects"]))
+        for s in ov["assigned_sessions"]:
+            self.assertEqual(set(s), SESSION_KEYS | {"project", "via"})
+            self.assertIn(s["via"], ("cwd", "manual"))
+            self.assertTrue(s["project"])
+
+    def test_orphan_tasks_are_visible(self):
+        """有任务但 slug 不匹配任何项目 → 必须单列，否则用户以为任务丢了（E1 兜底视图）。"""
+        ov = store.overview(setup=self.setup)
+        slugs = {p["slug"] for p in ov["projects"]}
+        self.assertEqual(ov["stats"]["orphan_tasks"], len(ov["orphan_tasks"]))
+        self.assertGreater(ov["stats"]["orphan_tasks"], 0,
+                           "当前真实数据应有孤儿任务（proj:hermes-cockpit 不在 14 个项目里）")
+        for t in ov["orphan_tasks"]:
+            self.assertNotIn(t["project"], slugs)
+            self.assertIn("subtasks", t)
 
     def test_stats_consistent_with_lists(self):
         ov = store.overview()
         self.assertEqual(ov["stats"]["sessions"],
                          sum(p["session_count"] for p in ov["projects"]) + len(ov["unassigned_sessions"]))
+        self.assertEqual(ov["stats"]["assigned_sessions"] + ov["stats"]["unassigned_sessions"],
+                         ov["stats"]["sessions"])
         self.assertGreaterEqual(ov["stats"]["boards"], 0)
         self.assertGreaterEqual(ov["stats"]["tasks"], 0)
 
@@ -107,6 +134,60 @@ class TestAssignmentRule(unittest.TestCase):
 
     def test_unrelated_cwd_unassigned(self):
         self.assertIsNone(store.assign_session(r"C:\Users\someone", self.PROJECTS))
+
+
+class TestManualAssignmentWins(unittest.TestCase):
+    """E1 主路径：META.yaml 的人工归类必须压过 cwd 规则（manual > cwd 命中）。
+
+    真实数据里 cwd 只覆盖 ~2%，归类全靠 session_map；它要是被 cwd 盖掉，
+    用户标完项目却看不到变化 —— 这是产品的主路径，不是兜底。
+    """
+
+    def setUp(self):
+        import host_adapter as _ha
+        self.ha = _ha
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        Path(self.root, "TASKS.md").write_text("# TASKS\n", encoding="utf-8")
+        Path(self.root, "META.yaml").write_text(
+            "setup:\n  status: pending\n  mode: null\n  at: null\n\n"
+            "session_map:\n  s-in:\n    project: inner\n    source: manual\n    at: \"2026-11-22T00:00:00+08:00\"\n",
+            encoding="utf-8")
+        self._orig = (_ha.read_projects, _ha.read_sessions, _ha.read_boards,
+                      _ha.read_board_tasks, _ha.last_warnings)
+        # 会话落在 outer 目录下（cwd 规则本判给 outer），但人工标给了 inner
+        _ha.read_projects = lambda: [
+            {"slug": "outer", "name": "外", "path": r"C:\dev\knowledge\infrastructure"},
+            {"slug": "inner", "name": "内", "path": r"C:\dev\knowledge\infrastructure\software-pipeline"},
+        ]
+        _ha.read_sessions = lambda limit=None: [
+            {"id": "s-in", "cwd": r"C:\dev\knowledge\infrastructure", "started_at": 1795315910.0,
+             "title": "人工标过", "updated_at": 1795315911.0},
+            {"id": "s-cwd", "cwd": r"C:\dev\knowledge\infrastructure\software-pipeline\x",
+             "started_at": 1795315910.0, "title": None, "updated_at": 1795315911.0},
+            {"id": "s-none", "cwd": r"C:\Users\someone", "started_at": 1795315910.0,
+             "title": None, "updated_at": 1795315911.0},
+        ]
+        _ha.read_boards = lambda: []
+        _ha.read_board_tasks = lambda slug: []
+        _ha.last_warnings = lambda: []
+
+    def tearDown(self):
+        (self.ha.read_projects, self.ha.read_sessions, self.ha.read_boards,
+         self.ha.read_board_tasks, self.ha.last_warnings) = self._orig
+        self.tmp.cleanup()
+
+    def test_manual_beats_cwd(self):
+        ov = store.overview(self.root, setup={"status": "done", "mode": "imported", "at": None})
+        by_id = {s["id"]: s for s in ov["assigned_sessions"]}
+        self.assertEqual(by_id["s-in"]["project"], "inner")
+        self.assertEqual(by_id["s-in"]["via"], "manual")
+        self.assertEqual(by_id["s-cwd"]["project"], "inner", "cwd 落在最深的 inner 目录下")
+        self.assertEqual(by_id["s-cwd"]["via"], "cwd")
+        self.assertEqual([s["id"] for s in ov["unassigned_sessions"]], ["s-none"])
+        counts = {p["slug"]: p["session_count"] for p in ov["projects"]}
+        self.assertEqual(counts, {"outer": 0, "inner": 2})
+        self.assertEqual(ov["stats"]["sessions"], 3)
 
 
 class TestTasksAttribution(unittest.TestCase):
