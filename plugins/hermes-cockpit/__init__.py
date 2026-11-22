@@ -38,11 +38,15 @@ def _render_project_section(session_info):
     import inject  # noqa: E402
 
     ha = _adapter()
-    repo_root = _PLUGIN_ROOT.parent.parent          # <repo>/plugins/<plugin> → <repo>
+    import store  # noqa: E402 - dashboard 目录已在 sys.path
 
+    # 数据目录必须走 store.project_root()，**不许再写死 `_PLUGIN_ROOT.parent.parent`**：
+    # 那个写法只在源码仓里指对，装到宿主后指到 AppData\Local\hermes\，META.yaml 读不到
+    # → 注入永远静默为空（与 GAP-02 同一个成因）。project_root 会读 plugin.yaml 的
+    # data_dir、再向上逐级找 TASKS.md/META.yaml。
     def load_meta():
-        import meta as meta_mod  # noqa: E402 - dashboard 目录已在 sys.path
-        path = repo_root / "META.yaml"
+        import meta as meta_mod  # noqa: E402
+        path = store.meta_path()
         return meta_mod.load(path) if path.is_file() else {}
 
     return inject.render_for_session(
