@@ -1,5 +1,5 @@
 id: project-hub
-name: Hermes Cockpit
+name: project-hub
 version: 0.1.0
 description: >
   项目中枢 — 把 app 内的项目、会话、任务、看板四层聚合为一个可看可操作的界面。

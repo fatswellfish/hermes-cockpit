@@ -76,10 +76,30 @@ run "cp '$DESK_SRC/plugin.js' '$DESK_DST/'"
 # 4) 启用（CLI 认的名字是 plugin.yaml 的 name，不是目录名 —— 这是实测踩过的坑）
 say "④ 启用插件"
 if [ "$DRY" = 1 ]; then
-  say "  [dry] hermes plugins enable \"Hermes Cockpit\""
+  say "  [dry] hermes plugins enable project-hub"
 else
-  hermes plugins enable "Hermes Cockpit" || \
-    say "  ⚠️ 启用失败：CLI 认的 key 取自 plugin.yaml 的 name 字段，用目录名会报 No plugin named"
+  # 启用 + 加白名单：只 enable 还不够。dashboard 后端的挂载判定会拿 manifest.json 的 name
+  # 去查 config.yaml 的 plugins.enabled，查不到就整条后端不挂（界面报 404 Plugin not found，
+  # 而 hermes plugins list 却显示 enabled —— 极易误判）。两件事都要做。
+  hermes plugins enable project-hub || \
+    say "  ⚠️ enable 未成功（可能已启用）；下面继续补白名单"
+  "$HOST_HOME/hermes-agent/venv/Scripts/python.exe" - "$HOST_HOME/config.yaml" <<'PY' 2>/dev/null || true
+import sys, pathlib, re
+p = pathlib.Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+if re.search(r"(?m)^\s*-\s*project-hub\s*$", t):
+    print("  plugins.enabled 已含 project-hub")
+else:
+    # 在 plugins.enabled: 列表末尾插一项；缩进沿用该列表已有行的缩进
+    m = re.search(r"(?m)^(  (?:  )*enabled:\s*\n)((?:[ ]+- .*\n)*)", t)
+    if not m:
+        print("  ⚠️ 没定位到 plugins.enabled 列表，请手动把 project-hub 加进去")
+    else:
+        body = m.group(2)
+        indent = "  " if not body else body[:len(body) - len(body.lstrip())]
+        p.write_text(t[:m.end()] + f"{indent}- project-hub\n" + t[m.end():], encoding="utf-8")
+        print("  plugins.enabled += project-hub")
+PY
 fi
 
 # 5) 自检：真的取到数吗
