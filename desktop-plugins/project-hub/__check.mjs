@@ -15,7 +15,7 @@
  * 覆盖（对应第五轮任务 4）：
  *   ① export default 有 id / name / register
  *   ② register(ctx) 调用 ctx.register ≥ 4 次，id 不重复
- *   ③ 注册的 area 覆盖 panes + 侧栏 + 路由 + ⌘K，元数据齐全
+ *   ③ 注册的 area 覆盖 侧栏 + 路由 + ⌘K + 状态栏，且**不往右栏 panes 塞三栏**，元数据齐全
  *   ④ 无 JSX 语法残留（正则扫 `<[A-Z]`）
  *   ⑤ 每个注册项的 render 首帧不抛异常
  *   ⑥ 写操作真语义：409 stale → 提示 + 自动 reload；403 → 原因原样透出；200 → 零误报
@@ -239,19 +239,20 @@ if (def) {
     return `${called.register.length} 个：${ids.join(', ')}`
   })
 
-  await check('③ area 覆盖 panes + 侧栏 + 路由 + ⌘K', () => {
+  await check('③ area 覆盖 侧栏 + 路由 + ⌘K + 状态栏（且**不许**再往右栏 panes 塞三栏）', () => {
     const areas = new Set(called.register.map(e => e.area))
-    const need = { panes: 'panes', sidebarNav: '侧栏', routes: '路由', palette: '⌘K' }
+    const need = { sidebarNav: '侧栏', routes: '路由', palette: '⌘K', 'statusBar.right': '状态栏' }
     const missing = Object.keys(need).filter(a => !areas.has(a)).map(a => need[a])
     assert.equal(missing.length, 0, `缺 area：${missing.join(', ')}`)
+    // 回归护栏：三栏最小可用宽度约 900px，塞进右侧 520px 栏会与 todo-panel、
+    // 文件树互相挤压，用户看到的是「点开没数据」。全宽视图只走 /cockpit 路由页。
+    assert.ok(!areas.has('panes'),
+      '又把三栏注册进右栏 panes 了 —— 520px 装不下三栏，用户会看到空白/挤压')
     return Array.from(areas).join(' + ')
   })
 
-  await check('③b 元数据：panes 带 placement/title/width，route/侧栏带 path，⌘K 命令可执行', () => {
+  await check('③b 元数据：route/侧栏带 path，⌘K 命令可执行', () => {
     const byId = Object.fromEntries(called.register.map(e => [e.id, e]))
-    assert.equal(byId['cockpit-pane'].data.placement, 'right')
-    assert.ok(byId['cockpit-pane'].data.title)
-    assert.ok(byId['cockpit-pane'].data.width)
     assert.equal(byId['cockpit-page'].data.path, '/cockpit')
     assert.equal(byId['cockpit-nav'].data.path, '/cockpit')
     assert.ok(byId['cockpit-nav'].data.label)
@@ -263,7 +264,7 @@ if (def) {
     byId['cockpit-cmd'].data.run()
     assert.ok(/run:\s*\(\)\s*=>\s*host\.navigate\('\/cockpit'\)/.test(SRC),
               '⌘K 命令没有导航到 /cockpit')
-    return 'panes / routes / sidebarNav / palette 元数据齐全，⌘K run() 可执行且指向 /cockpit'
+    return 'routes / sidebarNav / palette 元数据齐全，⌘K run() 可执行且指向 /cockpit'
   })
 
   await check('⑤ 每个注册项的 render 都能真跑（首帧不抛异常）', () => {

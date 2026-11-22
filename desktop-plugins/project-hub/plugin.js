@@ -858,13 +858,6 @@ function CockpitPage() {
   return jsx('div', { className: 'h-full', children: jsx(Cockpit, {}) })
 }
 
-function CockpitPane() {
-  return jsx('div', {
-    className: 'flex h-full flex-col overflow-hidden',
-    children: jsx(Cockpit, { readonly: false })
-  })
-}
-
 function CockpitChip() {
   const { data } = useOverview(8000)
   const st = (data && data.stats) || {}
@@ -892,15 +885,13 @@ export default {
   name: '项目中枢',
   defaultEnabled: true,
   register(ctx) {
-    // ① 右侧面板快捷视图
-    ctx.register({
-      id: 'cockpit-pane',
-      area: 'panes',
-      render: () => jsx(CockpitPane, {}),
-      data: { placement: 'right', title: '项目中枢', width: '520px' }
-    })
+    // ⚠️ 这里**不再**注册 `area: 'panes'` 的右栏视图。
+    // 三栏（项目/会话/任务）的最小可用宽度约 900px，塞进右侧 520px 栏里必然与
+    // todo-panel、文件树互相挤压，实测表现为「点开看不到数据」——页面没坏，是被压没了。
+    // 全宽视图由 ③ 路由页（/cockpit）承担，从侧栏入口 ④ 进入。
+    // 若将来要恢复右栏形态，请另写一个宽度自适应的精简组件，不要复用三栏 Cockpit。
 
-    // ② 状态栏小胶囊
+    // ① 状态栏小胶囊
     ctx.register({
       id: 'cockpit-chip',
       area: 'statusBar.right',
