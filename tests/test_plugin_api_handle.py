@@ -20,8 +20,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-for _p in (REPO / "plugins" / "hermes-cockpit" / "dashboard",
-           REPO / "plugins" / "hermes-cockpit" / "core"):
+for _p in (REPO / "plugins" / "project-hub" / "dashboard",
+           REPO / "plugins" / "project-hub" / "core"):
     sys.path.insert(0, str(_p))
 
 import fileio as fio  # noqa: E402

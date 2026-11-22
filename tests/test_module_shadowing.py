@@ -25,7 +25,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PLUGIN_DIR = REPO / "plugins" / "hermes-cockpit"
+PLUGIN_DIR = REPO / "plugins" / "project-hub"
 CORE_DIR = PLUGIN_DIR / "core"
 DASH_DIR = PLUGIN_DIR / "dashboard"
 

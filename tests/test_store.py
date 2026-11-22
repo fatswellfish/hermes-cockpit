@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 # 插件内部模块必须经 _module_loader 取 —— 与插件运行时是**同一个模块对象**。
 # 若这里裸 `import store`，桩打在另一份实例上，测试会假绿（第八轮实测踩过）。
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub"))
 import _module_loader as _ml  # noqa: E402
 
 ha = _ml.host_adapter()
@@ -251,19 +251,19 @@ class TestStoreBoundary(unittest.TestCase):
     """硬约束：store.py 不得直接开宿主库（复用 S10 扫描器，不另写一套判据）。"""
 
     def test_store_py_is_clean(self):
-        src = (REPO / "plugins" / "hermes-cockpit" / "dashboard" / "store.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "dashboard" / "store.py").read_text(
             encoding="utf-8")
         findings = cb.scan_text(src, "store.py", ".py")
         self.assertEqual(findings, [], f"store.py 越界：{[str(f) for f in findings]}")
 
     def test_store_py_has_no_sqlite_import(self):
-        src = (REPO / "plugins" / "hermes-cockpit" / "dashboard" / "store.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "dashboard" / "store.py").read_text(
             encoding="utf-8")
         self.assertNotIn("import sqlite3", src)
 
     def test_store_only_talks_to_host_through_adapter(self):
         """store 对宿主的读取必须全部走 ha.*（适配层函数）。"""
-        src = (REPO / "plugins" / "hermes-cockpit" / "dashboard" / "store.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "dashboard" / "store.py").read_text(
             encoding="utf-8")
         for fn in ("read_projects", "read_sessions", "read_boards"):
             self.assertIn(f"ha.{fn}(", src)
@@ -272,7 +272,7 @@ class TestStoreBoundary(unittest.TestCase):
 class TestProjectRootFallback(unittest.TestCase):
     """回归：没给参数也没设环境变量时，project_root() 必须落到**仓库根**。
 
-    曾经回退到插件根（<repo>/plugins/hermes-cockpit），那里没有 TASKS.md，
+    曾经回退到插件根（<repo>/plugins/project-hub），那里没有 TASKS.md，
     于是 overview() 静默返回 tasks=0 —— 不报错，只是所有任务计数全空。
     这种「假 0」比抛异常难查得多，所以用真实仓库结构锁死它。
     """
@@ -387,7 +387,7 @@ class TestProjectRootUpwards(unittest.TestCase):
         改成项目实际目录 —— 所以这里该锁的是**兜底行为**：data_dir 指错目录时
         必须给出人话告警，而不是 tasks=0 且一声不响。
         """
-        cfg = REPO / "plugins" / "hermes-cockpit" / "plugin.yaml"
+        cfg = REPO / "plugins" / "project-hub" / "plugin.yaml"
         line = next((ln for ln in cfg.read_text(encoding="utf-8").splitlines()
                      if ln.startswith("data_dir:")), None)
         self.assertIsNotNone(line, "plugin.yaml 没有 data_dir")

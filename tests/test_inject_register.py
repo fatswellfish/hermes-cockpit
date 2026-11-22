@@ -1,6 +1,6 @@
 """E2 注册面单测 —— 第六轮裁定 §四 要求 1/2：section id 固定、register 只转调。
 
-用桩 ctx 跑真实的 `plugins/hermes-cockpit/__init__.py::register`，不碰真宿主：
+用桩 ctx 跑真实的 `plugins/project-hub/__init__.py::register`，不碰真宿主：
     · id 必须是 `hermes-cockpit.project`（重复注册会 ValueError，所以固定 id 是硬约束）
     · register 里不得出现业务逻辑 ⇒ 只能发生一次「注册」调用，且参数由适配层给
     · 宿主抛错（例如重复注册）必须冒泡 —— 吞掉会变成「装了但没注入」的静默失败
@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PLUGIN_DIR = REPO / "plugins" / "hermes-cockpit"
+PLUGIN_DIR = REPO / "plugins" / "project-hub"
 
 
 def _load_plugin_module():

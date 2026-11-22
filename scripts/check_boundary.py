@@ -3,9 +3,9 @@
 
 规则（DD-001 §11.1「适配层边界(写死)」/ WBS F1）：
     宿主 = Hermes 本体。所有对 projects.db / state.db / kanban.db / gateway RPC 的访问，
-    **只允许**出现在 plugins/hermes-cockpit/dashboard/host_adapter.py。
+    **只允许**出现在 plugins/project-hub/dashboard/host_adapter.py。
 
-被扫描范围：plugins/hermes-cockpit/ 与 desktop-plugins/ 下全部 .py / .js
+被扫描范围：plugins/project-hub/ 与 desktop-plugins/ 下全部 .py / .js
             （tests/ 目录及其 test_*.py / *.test.js 不入扫描：它们本就要构造越界样例来证明扫描有效）
 豁免：适配层本体（--adapter 可改，默认 dashboard/host_adapter.py）
 
@@ -49,10 +49,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SCAN_DIRS = ("plugins/hermes-cockpit", "desktop-plugins")
+SCAN_DIRS = ("plugins/project-hub", "desktop-plugins")
 SCAN_SUFFIXES = {".py", ".js"}
 
-DEFAULT_ADAPTER = "plugins/hermes-cockpit/dashboard/host_adapter.py"
+DEFAULT_ADAPTER = "plugins/project-hub/dashboard/host_adapter.py"
 
 SKIP_DIR_NAMES = {"tests", "test", "__pycache__", "node_modules", ".git", "venv", ".venv"}
 SKIP_FILE_PATTERNS = (

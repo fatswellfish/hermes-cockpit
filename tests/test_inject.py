@@ -1,6 +1,6 @@
 """E2 判定逻辑单测 —— 第六轮裁定 §四 的 6 条硬要求，逐条锁死。
 
-被测对象：plugins/hermes-cockpit/core/prompt_inject.py（纯函数，不碰宿主）。
+被测对象：plugins/project-hub/core/prompt_inject.py（纯函数，不碰宿主）。
 宿主侧只有两处需要实测：section id 固定、注册成功 —— 那两处在
 tests/test_inject_register.py 用桩 ctx 验，与这里分开跑。
 
@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "core"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "core"))
 
 import prompt_inject  # noqa: E402
 

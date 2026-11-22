@@ -19,11 +19,11 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "dashboard"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "dashboard"))
 
 import host_adapter as ha  # noqa: E402
 
-COMPAT = REPO / "plugins" / "hermes-cockpit" / "dashboard" / "compat.yaml"
+COMPAT = REPO / "plugins" / "project-hub" / "dashboard" / "compat.yaml"
 
 
 class TestRealHostDatabases(unittest.TestCase):
@@ -256,7 +256,7 @@ class TestReadOnlyConnection(unittest.TestCase):
 
     def test_adapter_source_has_no_write_sql(self):
         """适配层源码里不得出现写语句（S13 第二条判据的静态侧）。"""
-        src = (REPO / "plugins" / "hermes-cockpit" / "dashboard" / "host_adapter.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "dashboard" / "host_adapter.py").read_text(
             encoding="utf-8")
         sys.path.insert(0, str(REPO / "scripts"))
         import check_boundary as cb

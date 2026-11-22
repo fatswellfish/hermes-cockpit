@@ -5,7 +5,7 @@
  * 关键：首帧是「加载中…」，必须让 useState 的 setter 真生效、再用新数据重渲一次，
  * 才验得到真实内容。所以这里的 useState 桩是**可写**的。
  *
- * 跑法：node desktop-plugins/hermes-cockpit/__render_check.mjs
+ * 跑法：node desktop-plugins/project-hub/__render_check.mjs
  */
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -23,8 +23,8 @@ const NL = String.fromCharCode(10)
 const py = 'C:/Users/Martin WANG/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe'
 const pyCode = [
   'import sys, json',
-  `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/hermes-cockpit/dashboard")`,
-  `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/hermes-cockpit/core")`,
+  `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/project-hub/dashboard")`,
+  `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/project-hub/core")`,
   'import store',
   'print(json.dumps(store.overview(), ensure_ascii=False))'
 ].join(NL)
@@ -37,6 +37,12 @@ const DATA = JSON.parse(dataRaw)
 // 只改 setup 这一块，其余字段全是后端真输出。
 const DATA_DONE = JSON.parse(JSON.stringify(DATA))
 DATA_DONE.setup = { status: 'done', mode: 'imported', at: null }
+
+// 引导**未完成**态的同一份数据：只改 setup 这一块，其余字段全是后端真输出。
+// 必须造这一份，不能指望真实 META.yaml 停在 pending —— 它一旦完成引导就永久是 done
+// （setup.at 单向门），拿真实数据跑这条用例会在「引导完成后」永远 FAIL。
+const DATA_PENDING = JSON.parse(JSON.stringify(DATA))
+DATA_PENDING.setup = { status: 'pending', mode: null, at: null }
 
 
 const results = []
@@ -284,7 +290,7 @@ await check('只读态：setup 未完成时只出现引导入口，写按钮不�
   //
   // ⚠ 必须用**真实** DATA 重渲一遍：上面的 tree 跑在 DATA_DONE 上（三栏用例需要），
   // 拿它来断言引导态只会永远看不到引导卡片 —— 那是两条互斥路径，各喂各的数据。
-  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => DATA })
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => DATA_PENDING })
   const pendingTree = await renderPage({ runEffects: true })
 
   const btns = []

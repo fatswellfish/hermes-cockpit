@@ -27,7 +27,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 # 插件内部模块必须经 _module_loader 取 —— 与插件运行时是**同一个模块对象**。
 # 若这里裸 `import host_adapter`，桩会打在另一份实例上，测试假绿（第八轮实测踩过）。
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub"))
 import _module_loader as _ml  # noqa: E402
 
 ha = _ml.host_adapter()
@@ -37,7 +37,7 @@ import importlib.util as _ilu  # noqa: E402
 
 _api_spec = _ilu.spec_from_file_location(
     "hermes_cockpit_test_plugin_api",
-    REPO / "plugins" / "hermes-cockpit" / "dashboard" / "plugin_api.py")
+    REPO / "plugins" / "project-hub" / "dashboard" / "plugin_api.py")
 api = _ilu.module_from_spec(_api_spec)
 sys.modules["hermes_cockpit_test_plugin_api"] = api
 _api_spec.loader.exec_module(api)
@@ -80,7 +80,7 @@ class _Sandbox:
         self._old_home = os.environ.get("HERMES_HOME")
         os.environ["HERMES_HOME"] = str(self.home)
         app = FastAPI()
-        app.include_router(api.router, prefix="/api/plugins/hermes-cockpit")
+        app.include_router(api.router, prefix="/api/plugins/project-hub")
         self.client = TestClient(app, raise_server_exceptions=False)
 
     # —— 请求助手 ——
@@ -100,19 +100,19 @@ class _Sandbox:
         # root 显式指定：/overview 也要读沙盒那份 TASKS.md，不能读本仓真实的（戳会错位）
         params = dict(kw.pop("params", None) or {})
         params.setdefault("root", str(self.root))
-        return self.client.get(f"/api/plugins/hermes-cockpit{path}", params=params, **kw)
+        return self.client.get(f"/api/plugins/project-hub{path}", params=params, **kw)
 
     def post(self, path, body=None, headers=None):
         payload = dict(body or {})
         # 明确指定项目根：不依赖插件按 __file__ 往上三级猜（那会读到本仓真实的 TASKS.md）
         payload.setdefault("root", str(self.root))
-        return self.client.post(f"/api/plugins/hermes-cockpit{path}",
+        return self.client.post(f"/api/plugins/project-hub{path}",
                                 json=payload, headers=headers or {})
 
     def delete(self, path, body=None, headers=None):
         payload = dict(body or {})
         payload.setdefault("root", str(self.root))
-        return self.client.request("DELETE", f"/api/plugins/hermes-cockpit{path}",
+        return self.client.request("DELETE", f"/api/plugins/project-hub{path}",
                                    json=payload, headers=headers or {})
 
     def tasks_text(self) -> str:
@@ -213,7 +213,7 @@ class TestTaskWrites(unittest.TestCase):
         """只给 mtime（毫秒/纳秒整数）也要能用 —— If-Unmodified-Since 走这条分支。"""
         ident = self.sb.stamp()[0]
         mtime_ns = int(ident.split(":mtime=")[-1])
-        r = self.sb.client.post("/api/plugins/hermes-cockpit/tasks/toggle",
+        r = self.sb.client.post("/api/plugins/project-hub/tasks/toggle",
                                 json={"root": str(self.sb.root), "id": "T-001",
                                       "subtask_id": "T-001.2"},
                                 headers={"If-Unmodified-Since": str(mtime_ns)})
@@ -459,12 +459,12 @@ class TestRouteLayerStaysPure(unittest.TestCase):
     def test_plugin_api_is_boundary_clean(self):
         sys.path.insert(0, str(REPO / "scripts"))
         import check_boundary as cb
-        src = (REPO / "plugins" / "hermes-cockpit" / "dashboard" / "plugin_api.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "dashboard" / "plugin_api.py").read_text(
             encoding="utf-8")
         self.assertEqual(cb.scan_text(src, "plugin_api.py", ".py"), [])
 
     def test_no_serialize_in_write_path(self):
-        src = (REPO / "plugins" / "hermes-cockpit" / "dashboard" / "plugin_api.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "dashboard" / "plugin_api.py").read_text(
             encoding="utf-8")
         self.assertNotIn("tf.serialize(", src)
         self.assertIn("tf.write_back(", src)

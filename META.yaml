@@ -4,13 +4,13 @@
 
 setup:
   # pending = 未走引导；done = 已完成
-  status: pending
+  status: done
   # fresh = 从零开始（只看插件安装后的会话）；imported = 导入已有（全量视野）；null = 未选
   # 注意：单向，不提供 imported -> fresh 反向切换（setup.at 写一次永不改变）
-  mode: null
+  mode: imported
   # ISO8601，首次完成引导那一刻的时间戳；fresh 作用域的比较基准。
   # 写入后永不改变。见 DI-001 D12。
-  at: null
+  at: "2026-11-23T04:00:37+08:00"
 
 unclassified_slug: 未分类
 

@@ -22,8 +22,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "dashboard"))
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "core"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "dashboard"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "core"))
 
 import fileio as fio  # noqa: E402
 import taskfile as tf  # noqa: E402

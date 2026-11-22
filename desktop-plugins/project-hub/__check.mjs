@@ -21,7 +21,7 @@
  *   ⑥ 写操作真语义：409 stale → 提示 + 自动 reload；403 → 原因原样透出；200 → 零误报
  *   ⑦ 边界：无硬编码颜色、不直连宿主库、不绕 API 前缀
  *
- * 跑法：node desktop-plugins/hermes-cockpit/__check.mjs
+ * 跑法：node desktop-plugins/project-hub/__check.mjs
  * 退出码：全通过 0，有失败 1。
  */
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
@@ -178,7 +178,7 @@ await check('⑦b 不直连宿主库、不改 cwd、不用宿主 RPC', () => {
   return '干净'
 })
 
-await check('⑦c 数据只走 /api/plugins/hermes-cockpit', () => {
+await check('⑦c 数据只走 /api/plugins/project-hub', () => {
   assert.ok(SRC.includes('const API = `/api/plugins/${ID}`'), 'API 前缀不是 /api/plugins/${ID}')
   const bare = SRC.match(/fetch\(\s*['"`]\/api\//g) || []
   assert.equal(bare.length, 0, `存在绕过 API 常量的裸路径 fetch：${bare.join(', ')}`)
@@ -216,7 +216,7 @@ const ctx = { register: e => called.register.push(e) }
 
 if (def) {
   await check('① export default 有 id / name / register', () => {
-    assert.equal(def.id, 'hermes-cockpit')
+    assert.equal(def.id, 'project-hub')
     assert.equal(typeof def.name, 'string')
     assert.ok(def.name.length > 0)
     assert.equal(typeof def.register, 'function')
@@ -407,8 +407,8 @@ if (def) {
     const REPO = path.resolve(HERE, '..', '..')
     const out = execFileSync(py, ['-c', [
       'import sys, json',
-      `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/hermes-cockpit/dashboard")`,
-      `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/hermes-cockpit/core")`,
+      `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/project-hub/dashboard")`,
+      `sys.path.insert(0, r"${REPO.replace(/\\/g, '/')}/plugins/project-hub/core")`,
       'import plugin_api as api',
       'status, payload = api._handle_route("GET", "/overview", {})',
       'print(json.dumps({"status": status, "has_stamp": bool(payload.get("stamp")), ' +

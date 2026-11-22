@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "core"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "core"))
 
 import taskfile as tf  # noqa: E402
 
@@ -95,7 +95,7 @@ class TestD02NoQuestionComment(unittest.TestCase):
     """D-02：注释与行为一致，不留自问自答的疑问句。"""
 
     def test_source_has_no_question_comment_in_parse_heading(self):
-        src = (REPO / "plugins" / "hermes-cockpit" / "core" / "taskfile.py").read_text(
+        src = (REPO / "plugins" / "project-hub" / "core" / "taskfile.py").read_text(
             encoding="utf-8")
         start = src.index("def _parse_heading")
         body = src[start:src.index("def _parse_subtask_id")]

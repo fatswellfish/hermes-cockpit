@@ -19,8 +19,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "dashboard"))
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "core"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "dashboard"))
+sys.path.insert(0, str(REPO / "plugins" / "project-hub" / "core"))
 
 import host_adapter as ha  # noqa: E402
 import meta as meta_mod  # noqa: E402

@@ -51,11 +51,11 @@ def _clean_file() -> str:
 
 
 class _FakeRepo:
-    """最小仓库骨架：plugins/hermes-cockpit/dashboard/<name>.py + 一个适配层。"""
+    """最小仓库骨架：plugins/project-hub/dashboard/<name>.py + 一个适配层。"""
 
     def __init__(self, extra_source: str = ""):
         self.dir = Path(tempfile.mkdtemp(prefix="cockpit-boundary-"))
-        self.pkg = self.dir / "plugins" / "hermes-cockpit"
+        self.pkg = self.dir / "plugins" / "project-hub"
         self.dash = self.pkg / "dashboard"
         self.dash.mkdir(parents=True)
         (self.pkg / "__init__.py").write_text("", encoding="utf-8")
@@ -238,8 +238,8 @@ class TestRegisterEntryPointExemption(unittest.TestCase):
     直接调宿主 `ctx.register_*` 仍违规；hook 三令不因这条豁免而放宽。
     """
 
-    ENTRY = "plugins/hermes-cockpit/__init__.py"
-    OTHER = "plugins/hermes-cockpit/dashboard/plugin_api.py"
+    ENTRY = "plugins/project-hub/__init__.py"
+    OTHER = "plugins/project-hub/dashboard/plugin_api.py"
 
     def test_forward_through_adapter_is_exempt(self):
         src = ("def register(ctx) -> None:\n"
