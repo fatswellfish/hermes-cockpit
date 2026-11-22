@@ -40,8 +40,15 @@ run "mkdir -p '$PLUG_DST'"
 run "cp -r '$PLUG_SRC'/dashboard '$PLUG_DST'/"
 run "cp -r '$PLUG_SRC'/core '$PLUG_DST'/"
 run "cp '$PLUG_SRC/__init__.py' '$PLUG_DST'/"
+# _module_loader.py 是包内模块加载器，__init__.py 与 dashboard/plugin_api.py 都靠它；
+# 漏拷会让插件在 import 阶段直接 FileNotFoundError（实测：宿主缺此文件，整个插件加载失败）。
+run "cp '$PLUG_SRC/_module_loader.py' '$PLUG_DST'/"
 run "cp '$PLUG_SRC/plugin.yaml' '$PLUG_DST'/"
 run "cp '$PLUG_SRC/plugin_api.py' '$PLUG_DST'/" 2>/dev/null || true
+# cp -r 是叠加不是镜像：源码里已改名的模块（inject.py → prompt_inject.py）会在宿主留下旧副本。
+# 旧副本一旦被 import 就是「找不到新函数」的根源，所以按源码清单清掉宿主 core/ 里的多余 .py。
+run "for f in '$PLUG_DST'/core/*.py; do [ -e \"\$f\" ] || continue; b=\$(basename \"\$f\"); [ -e '$PLUG_SRC/core/'\"\$b\" ] || { say \"  清除宿主残留 core/\$b\"; rm -f \"\$f\"; }; done"
+run "rm -rf '$PLUG_DST'/core/__pycache__ '$PLUG_DST'/__pycache__"
 
 # 2) data_dir 必须指向仓库（TASKS.md / META.yaml 所在）
 #    漏了这步：插件能开、界面能出，但 tasks 恒为 0（GAP-02 实测）
