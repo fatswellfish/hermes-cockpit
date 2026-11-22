@@ -18,12 +18,16 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit" / "dashboard"))
 sys.path.insert(0, str(REPO / "scripts"))
 
-import host_adapter as ha  # noqa: E402
-import store  # noqa: E402
-import taskfile as tf  # noqa: E402
+# 插件内部模块必须经 _module_loader 取 —— 与插件运行时是**同一个模块对象**。
+# 若这里裸 `import store`，桩打在另一份实例上，测试会假绿（第八轮实测踩过）。
+sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit"))
+import _module_loader as _ml  # noqa: E402
+
+ha = _ml.host_adapter()
+store = _ml.store()
+tf = _ml.taskfile()
 import check_boundary as cb  # noqa: E402
 
 PROJECT_KEYS = {"slug", "name", "path", "session_count", "task_count", "task_doing", "task_blocked",
@@ -144,7 +148,7 @@ class TestManualAssignmentWins(unittest.TestCase):
     """
 
     def setUp(self):
-        import host_adapter as _ha
+        _ha = ha                          # 必须复用模块级那份（经 _module_loader 取），裸 import 会是另一份实例
         self.ha = _ha
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)

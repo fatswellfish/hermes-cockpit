@@ -12,21 +12,36 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
 
-# 适配层在自己的目录里；core/taskfile.py 在 core/。两者都要 import，
-# 而插件加载方式不固定（desktop 插件 / 测试 / CLI），所以显式补 sys.path。
+# 插件内部模块一律经 _module_loader 按**文件路径**加载，**不许补 sys.path 再裸 import**
+# （第八轮修复）：宿主里 sys.modules 可能已被同名模块占住（实测宿主 venv 有
+# pet/store.py、pm/progress.py、boto3/s3/inject.py 等），而 sys.path 的优先级
+# 压不过已缓存的模块 —— 裸 import 会静默拿到别人的模块。
 _HERE = Path(__file__).resolve().parent
 _PLUGIN_ROOT = _HERE.parent
-for _p in (_HERE, _PLUGIN_ROOT / "core"):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+_LOADER_KEY = "hermes_cockpit_module_loader"
+_ml = sys.modules.get(_LOADER_KEY)
+if _ml is None:
+    _loader_spec = importlib.util.spec_from_file_location(
+        _LOADER_KEY, _PLUGIN_ROOT / "_module_loader.py")
+    if _loader_spec is None or _loader_spec.loader is None:      # pragma: no cover
+        raise ImportError(
+            f"hermes-cockpit: 找不到模块加载器 {_PLUGIN_ROOT / '_module_loader.py'}")
+    _ml = importlib.util.module_from_spec(_loader_spec)
+    sys.modules[_LOADER_KEY] = _ml
+    try:
+        _loader_spec.loader.exec_module(_ml)
+    except BaseException:
+        sys.modules.pop(_LOADER_KEY, None)      # 不留半初始化空壳
+        raise
 
-import host_adapter as ha  # noqa: E402
-import meta as meta_mod  # noqa: E402
-import taskfile as tf  # noqa: E402
+ha = _ml.host_adapter()
+meta_mod = _ml.meta()
+tf = _ml.taskfile()
 
 TASKS_FILENAME = "TASKS.md"
 META_FILENAME = "META.yaml"

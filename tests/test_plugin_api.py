@@ -25,13 +25,22 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-for _p in (REPO / "plugins" / "hermes-cockpit" / "dashboard",
-           REPO / "plugins" / "hermes-cockpit" / "core"):
-    sys.path.insert(0, str(_p))
+# 插件内部模块必须经 _module_loader 取 —— 与插件运行时是**同一个模块对象**。
+# 若这里裸 `import host_adapter`，桩会打在另一份实例上，测试假绿（第八轮实测踩过）。
+sys.path.insert(0, str(REPO / "plugins" / "hermes-cockpit"))
+import _module_loader as _ml  # noqa: E402
 
-import host_adapter as ha  # noqa: E402
-import meta as meta_mod  # noqa: E402
-import plugin_api as api  # noqa: E402
+ha = _ml.host_adapter()
+meta_mod = _ml.meta()
+
+import importlib.util as _ilu  # noqa: E402
+
+_api_spec = _ilu.spec_from_file_location(
+    "hermes_cockpit_test_plugin_api",
+    REPO / "plugins" / "hermes-cockpit" / "dashboard" / "plugin_api.py")
+api = _ilu.module_from_spec(_api_spec)
+sys.modules["hermes_cockpit_test_plugin_api"] = api
+_api_spec.loader.exec_module(api)
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -111,8 +120,7 @@ class _Sandbox:
 
     def stamp(self):
         """当前文件戳 (ident, sha256) —— 客户端带上它才算「我读过这版」。"""
-        import fileio as fio
-        _, stamp = fio.read_with_stamp(self.root / "TASKS.md")
+        _, stamp = _ml.fileio().read_with_stamp(self.root / "TASKS.md")
         return stamp
 
     def cleanup(self):

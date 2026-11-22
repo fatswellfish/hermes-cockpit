@@ -32,19 +32,21 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
-# 插件目录内的相对导入：desktop 宿主把本文件当作独立模块加载，包名不一定可用，
-# 所以与 store.py 同样的办法显式补 sys.path。
+# 插件目录内的相对导入：desktop 宿主把本文件当作独立模块加载，包名不一定可用。
+# **不许补 sys.path 再裸 import**（第八轮修复）：宿主里 sys.modules 可能已被同名模块
+# 占住（实测宿主 venv 有 boto3/s3/inject.py 等），sys.path 优先级压不过已缓存的模块。
+# 一律经 _module_loader 按文件路径加载，模块名带 hermes_cockpit_ 前缀。
 _HERE = Path(__file__).resolve().parent
 _PLUGIN_ROOT = _HERE.parent
-for _p in (_HERE, _PLUGIN_ROOT / "core"):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))       # 仅用于找到 _module_loader.py 本身
 
 try:                                        # pragma: no cover - 宿主里必然可用
     from fastapi import APIRouter, Body, Request
@@ -55,12 +57,28 @@ except Exception:                           # pragma: no cover - 无 fastapi 时
     router = None                           # type: ignore[assignment]
     JSONResponse = None                     # type: ignore[assignment]
 
-import fileio as fio  # noqa: E402
-import host_adapter as ha  # noqa: E402
-import meta as meta_mod  # noqa: E402
-import progress as pg  # noqa: E402
-import store  # noqa: E402
-import taskfile as tf  # noqa: E402
+_LOADER_KEY = "hermes_cockpit_module_loader"
+_ml = sys.modules.get(_LOADER_KEY)
+if _ml is None:
+    _loader_spec = importlib.util.spec_from_file_location(
+        _LOADER_KEY, _PLUGIN_ROOT / "_module_loader.py")
+    if _loader_spec is None or _loader_spec.loader is None:      # pragma: no cover
+        raise ImportError(
+            f"hermes-cockpit: 找不到模块加载器 {_PLUGIN_ROOT / '_module_loader.py'}")
+    _ml = importlib.util.module_from_spec(_loader_spec)
+    sys.modules[_LOADER_KEY] = _ml
+    try:
+        _loader_spec.loader.exec_module(_ml)
+    except BaseException:
+        sys.modules.pop(_LOADER_KEY, None)      # 不留半初始化空壳
+        raise
+
+fio = _ml.fileio()
+ha = _ml.host_adapter()
+meta_mod = _ml.meta()
+pg = _ml.progress()
+store = _ml.store()
+tf = _ml.taskfile()
 
 STATUSES = tf.STATUSES
 
