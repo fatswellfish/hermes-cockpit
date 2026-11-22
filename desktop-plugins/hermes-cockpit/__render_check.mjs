@@ -14,6 +14,8 @@ import { execFileSync } from 'node:child_process'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN = path.join(HERE, 'plugin.js')
+// 源码文本：下面若干断言要直接查 plugin.js 的写法（不能只看渲染树，因为桩会展开组件）。
+const SRC = readFileSync(PLUGIN, 'utf8')
 const REPO = path.resolve(HERE, '..', '..')
 const NL = String.fromCharCode(10)
 
@@ -258,39 +260,36 @@ check('中栏会话条数远大于一屏时已分页（不一次画 1479 条）'
   return `总计 ${total} 条，出现分页文案`
 })
 
-check('只读态：setup 未完成时写按钮全部 readonly', () => {
-  // ActBtn 是函数组件：jsx(ActBtn, {readonly: true}) 在树里是 {__el: 'ActBtn', props}。
-  // 注意桩里的 asElement 只对**字符串型**类型保留 __el；函数组件已被当组件调用，
-  // 所以 ActBtn 出现在树里时是它**返回的** {__el:'Tip', props:{label, children:{__el:'button'}}}。
-  // 判据因此落在：所有带 disabled 语义的写入口都必须是 readonly=true。
-  const found = []
+check('只读态：setup 未完成时写按钮全部 disabled', () => {
+  // ActBtn 最终产出的是一个真实 <button>，只是被 Tip 包着；把树摊平后能拿到它。
+  // 只读态下凡是**会写盘的**按钮（归类 / 新建会话）必须 disabled=true。
+  const btns = []
   ;(function walk(n) {
     if (!n || typeof n !== 'object') return
     if (Array.isArray(n)) return n.forEach(walk)
-    if (n.__el === 'ActBtn') found.push(n.props)
-    // ActBtn 桩展开后：{__el:'Tip', props:{label:'只读模式…', children:{__el:'button'}}}
-    if (n.__el === 'Tip' && /只读模式/.test(String(n.props && n.props.label))) found.push(n.props)
+    if (n.__el === 'button') btns.push(n.props)
     if (n.props) walk(n.props.children)
   })(tree)
 
   const setupDone = DATA.setup && DATA.setup.status === 'done'
-  if (setupDone) return `setup 已完成，只读约束不生效（识别到写按钮 ${found.length} 个）`
-  if (found.length === 0) {
-    throw new Error('setup 未完成但一个处于只读态的写按钮都没渲染出来 —— 无法验证禁用逻辑')
+  // 写按钮的判据：ActBtn 产出的按钮带 disabled 字段（只读按钮不带这个字段）
+  const writeBtns = btns.filter(b => Object.prototype.hasOwnProperty.call(b, 'disabled'))
+  if (setupDone) return `setup 已完成，只读约束不生效（写按钮 ${writeBtns.length} 个）`
+  if (writeBtns.length === 0) {
+    throw new Error(`setup 未完成但一个写按钮都没渲染（共 ${btns.length} 个按钮）—— 无法验证禁用逻辑`)
   }
-  // ActBtn 内层把 readonly 翻成 disabled：验它真的这么写了
+  const notDisabled = writeBtns.filter(b => !b.disabled)
+  if (notDisabled.length) {
+    throw new Error(`setup.status=${DATA.setup.status} 但有 ${notDisabled.length} 个写按钮没 disabled：` +
+      notDisabled.map(b => b.children).join(', '))
+  }
+  // tooltip 也要在：只读态不能只变灰，得说清为什么
   const btnSrc = SRC.slice(SRC.indexOf('function ActBtn'), SRC.indexOf('function projectCategory'))
-  if (!/const off = disabled \|\| readonly/.test(btnSrc)) {
-    throw new Error('ActBtn 没有把 readonly 计入 off')
-  }
-  if (!/disabled:\s*off/.test(btnSrc)) {
-    throw new Error('ActBtn 没有把 off 传给 <button disabled>')
-  }
   if (!/只读模式（引导未完成）— 写操作已禁用/.test(btnSrc)) {
-    throw new Error('ActBtn 只读态没有给 tooltip 文案')
+    throw new Error('ActBtn 只读态没有 tooltip 文案')
   }
-  return `setup.status=${DATA.setup.status}，${found.length} 个写按钮处于只读态；` +
-    'ActBtn 内 readonly→disabled→tooltip 三点已核实'
+  return `setup.status=${DATA.setup.status}，写按钮 ${writeBtns.length} 个全部 disabled` +
+    `（另有 ${btns.length - writeBtns.length} 个只读按钮正常可点），tooltip 文案在位`
 })
 
 try { unlinkSync(loaderFile) } catch (e) { /* 已删 */ }

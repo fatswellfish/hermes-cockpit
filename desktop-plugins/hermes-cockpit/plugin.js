@@ -541,14 +541,17 @@ function TaskCard({ t, readonly, onToggle }) {
 
 function RightCol({ data, selected, readonly, reload, warnings }) {
   const view = useMemo(() => {
-    if (!data) return { tasks: [], title: '任务', orphan: false }
+    if (!data) return { tasks: [], orphans: [], title: '任务', orphan: false }
     if (selected && selected.kind === 'project') {
-      // 项目任务：后端把 slug 不在项目表里的任务单列在 orphan_tasks，
-      // 命中当前 slug 的那条就是这个项目的任务（真实数据里 proj 与项目表常对不上）
+      // 项目任务：后端把 slug 不在项目表里的任务单列在 orphan_tasks。
+      // ⚠️ 真实数据里两条任务（T-001/T-002）的 proj 都是 hermes-cockpit，而 14 个项目里没有这个 slug——
+      //    只按 slug 过滤会让它们在任何项目视图下都看不见，用户会以为任务丢了。
+      //    所以这里分两组：本项目任务 + 全部未归属任务（后者始终带出来，标明来源）。
       const hit = (data.orphan_tasks || []).filter(t => t.project === selected.slug)
-      return { tasks: hit, title: '任务', orphan: hit.length > 0 }
+      const rest = (data.orphan_tasks || []).filter(t => t.project !== selected.slug)
+      return { tasks: hit, orphans: rest, title: '任务', orphan: hit.length > 0 }
     }
-    return { tasks: data.orphan_tasks || [], title: '未归属任务', orphan: true }
+    return { tasks: [], orphans: data.orphan_tasks || [], title: '未归属任务', orphan: true }
   }, [data, selected])
 
   const onToggle = useCallback(async (task, s) => {
@@ -598,11 +601,42 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
       }),
 
       view.tasks.length === 0
-        ? jsx(Empty, { children: '这里没有任务' })
+        ? (view.orphans.length
+            ? null
+            : jsx(Empty, { children: '这里没有任务' }))
         : jsx('div', {
             className: 'flex flex-col gap-2',
             children: view.tasks.map(t => jsx(TaskCard, { t, readonly, onToggle }, t.id))
+          }),
+
+      // 未归属任务：proj 的 slug 不在项目表里。必须始终可见 ——
+      // 否则这些任务在任何项目视图下都不出现，用户会以为任务丢了。
+      view.orphans && view.orphans.length
+        ? jsxs('div', {
+            className: 'mt-2 flex flex-col gap-2',
+            children: [
+              jsxs('div', {
+                className: 'flex items-center justify-between',
+                children: [
+                  jsx('div', {
+                    className: 'text-[0.6875rem] font-medium',
+                    style: { color: 'var(--ui-text-secondary)' },
+                    children: `未归属任务 · ${view.orphans.length}`
+                  }),
+                  jsx('div', {
+                    className: 'text-[0.625rem]',
+                    style: { color: 'var(--ui-text-quaternary)' },
+                    children: 'proj 不在项目表'
+                  })
+                ]
+              }),
+              jsx('div', {
+                className: 'flex flex-col gap-2',
+                children: view.orphans.map(t => jsx(TaskCard, { t, readonly, onToggle }, t.id))
+              })
+            ]
           })
+        : null
     ]
   })
 }
@@ -614,7 +648,10 @@ function Cockpit({ readonly }) {
   const [selected, setSelected] = useState(null)
   const firstPick = useRef(false)
 
-  // 首帧默认落在会话数最多的项目上，第一版必须一眼看到东西
+  // 首帧默认落在会话数最多的项目上，第一版必须一眼看到东西。
+  //
+  // 双保险：effect 负责常规路径；下面 render 时再兜一次，
+  // 因为实测只靠 effect 会停在 selected=null，首屏一个写入口都不渲染。
   useEffect(() => {
     if (firstPick.current || !data || !data.projects) return
     firstPick.current = true
@@ -624,6 +661,18 @@ function Cockpit({ readonly }) {
     }
     if (best) setSelected({ kind: 'project', slug: best.slug, path: best.path })
   }, [data])
+
+  // 兜底：数据已在但还没选中 → 本次渲染用同一个规则临时定一个
+  const autoPick =
+    selected ||
+    (data && data.projects && data.projects.length
+      ? (() => {
+          let b = data.projects[0]
+          for (const p of data.projects) if (p.session_count > b.session_count) b = p
+          return { kind: 'project', slug: b.slug, path: b.path }
+        })()
+      : null)
+  const eff = autoPick
 
   if (err && !data) {
     return jsxs('div', {
@@ -674,9 +723,9 @@ function Cockpit({ readonly }) {
       jsxs('div', {
         className: 'flex min-h-0 flex-1 overflow-hidden',
         children: [
-          jsx(LeftCol, { data, selected, onSelect: setSelected, stats }),
-          jsx(MidCol, { data, selected, readonly: isReadonly, reload, projects }),
-          jsx(RightCol, { data, selected, readonly: isReadonly, reload, warnings })
+          jsx(LeftCol, { data, selected: eff, onSelect: setSelected, stats }),
+          jsx(MidCol, { data, selected: eff, readonly: isReadonly, reload, projects }),
+          jsx(RightCol, { data, selected: eff, readonly: isReadonly, reload, warnings })
         ]
       })
     ]
