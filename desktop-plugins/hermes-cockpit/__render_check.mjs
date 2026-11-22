@@ -31,10 +31,20 @@ const pyCode = [
 const dataRaw = execFileSync(py, ['-c', pyCode], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 const DATA = JSON.parse(dataRaw)
 
+// 真实 META.yaml 当前是 `status: pending`（引导未完成）。缺陷 3 修好后，
+// 这种状态下首屏**按设计**只渲染引导卡片，三栏是不画的 —— 所以「三栏画了什么」
+// 这组用例必须喂「引导已完成」的同一份数据，否则测的是引导卡片而不是三栏。
+// 只改 setup 这一块，其余字段全是后端真输出。
+const DATA_DONE = JSON.parse(JSON.stringify(DATA))
+DATA_DONE.setup = { status: 'done', mode: 'imported', at: null }
+
+
 const results = []
-function check(name, fn) {
+async function check(name, fn) {
   try {
-    const note = fn()
+    // fn 可能是 async（需要重新渲染一次）：必须 await，否则拿到的是 Promise，
+    // 断言一个都没跑却记成 PASS —— 那是假绿，比失败更危险。
+    const note = await fn()
     results.push({ name, ok: true, note: note || '' })
   } catch (e) {
     results.push({ name, ok: false, note: e && e.message ? e.message : String(e) })
@@ -110,7 +120,7 @@ const loaderSrc = [
 
 // ── 桩掉 fetch，返回真数据 ───────────────────────────────────────────────
 let fetchCalls = 0
-globalThis.fetch = async () => { fetchCalls += 1; return { ok: true, status: 200, json: async () => DATA } }
+globalThis.fetch = async () => { fetchCalls += 1; return { ok: true, status: 200, json: async () => DATA_DONE } }
 
 const loaderFile = path.join(HERE, '__render_loader.mjs')
 writeFileSync(loaderFile, loaderSrc, 'utf8')
@@ -132,6 +142,10 @@ const page = regs.find(r => r.area === 'routes')
  */
 async function renderPage({ runEffects }) {
   const G = globalThis
+  // 每次「从零渲染」都要清空全组件树的状态槽位：React 里换一棵新树就是新状态，
+  // 而桩把槽位挂在 globalThis 上 —— 不清就会把上一次渲染的 useState 值（如 busy）
+  // 泄漏进这次，测出来的 disabled 是残留值不是产品行为。
+  G.__SLOTS__ = []
   for (let pass = 0; pass < 6; pass += 1) {
     G.__SLOT_IX__ = 0
     G.__REF_IX__ = 0
@@ -152,12 +166,12 @@ async function renderPage({ runEffects }) {
   throw new Error('重渲 6 次仍未收敛（setter 一直在触发渲染）')
 }
 
-check('route 页注册存在', () => {
+await check('route 页注册存在', () => {
   if (!page) throw new Error('没有 routes 注册项')
   return page.data.path
 })
 
-check('首帧渲染不抛异常（此时应为「加载中…」）', () => {
+await check('首帧渲染不抛异常（此时应为「加载中…」）', () => {
   globalThis.__SLOT_IX__ = 0
   globalThis.__REF_IX__ = 0
   globalThis.__EFFECTS__ = []
@@ -191,12 +205,12 @@ const tree = await renderPage({ runEffects: true })
 const texts = collectText(tree, [])
 const blob = texts.join(' | ')
 
-check('数据到位后真的取到数（fetch 被调用）', () => {
+await check('数据到位后真的取到数（fetch 被调用）', () => {
   if (fetchCalls === 0) throw new Error('一次 fetch 都没发 —— useEffect 没跑到取数')
   return `${fetchCalls} 次 fetch`
 })
 
-check('顶部总览条显示真实计数', () => {
+await check('顶部总览条显示真实计数', () => {
   const st = DATA.stats
   const want = [`${st.projects} 项目`, `${st.sessions} 会话`, `${st.tasks} 任务`, `${st.boards} 看板`]
   const missing = want.filter(w => !blob.includes(w))
@@ -204,20 +218,20 @@ check('顶部总览条显示真实计数', () => {
   return want.join(' · ')
 })
 
-check('左栏列出全部项目名', () => {
+await check('左栏列出全部项目名', () => {
   const names = DATA.projects.map(p => p.name)
   const missing = names.filter(n => !blob.includes(n))
   if (missing.length) throw new Error(`漏了 ${missing.length} 个项目：${missing.slice(0, 5).join(', ')}`)
   return `${names.length} 个项目全部出现`
 })
 
-check('左栏显示未归属会话条数', () => {
+await check('左栏显示未归属会话条数', () => {
   const want = `${DATA.stats.unassigned_sessions} 会话`
   if (!blob.includes(want)) throw new Error(`找不到「${want}」\n样例：${blob.slice(0, 400)}`)
   return want
 })
 
-check('中栏渲染了默认选中项目的会话（真的画了条目）', () => {
+await check('中栏渲染了默认选中项目的会话（真的画了条目）', () => {
   let best = null
   for (const p of DATA.projects) if (!best || p.session_count > best.session_count) best = p
   const sessions = DATA.assigned_sessions.filter(s => s.project === best.slug)
@@ -232,14 +246,14 @@ check('中栏渲染了默认选中项目的会话（真的画了条目）', () =
   return `${best.slug}：${sessions.length} 条会话，可见文本已核对`
 })
 
-check('右栏渲染孤儿任务（T-001 等）', () => {
+await check('右栏渲染孤儿任务（T-001 等）', () => {
   const ids = DATA.orphan_tasks.map(t => t.id)
   const missing = ids.filter(i => !blob.includes(i))
   if (missing.length) throw new Error(`漏了任务：${missing.join(', ')}\n样例：${blob.slice(0, 500)}`)
   return `${ids.length} 个孤儿任务全部出现：${ids.join(', ')}`
 })
 
-check('右栏有阻塞时显示阻塞标记', () => {
+await check('右栏有阻塞时显示阻塞标记', () => {
   const blocked = DATA.orphan_tasks.filter(t => t.blocker && t.blocker !== '无' && t.blocker !== '无。')
   if (!blocked.length) return '当前无阻塞任务（无断言）'
   const b = blocked[0]
@@ -247,7 +261,7 @@ check('右栏有阻塞时显示阻塞标记', () => {
   return `画出了 ⛔ ${String(b.blocker).slice(0, 24)}`
 })
 
-check('中栏会话条数远大于一屏时已分页（不一次画 1479 条）', () => {
+await check('中栏会话条数远大于一屏时已分页（不一次画 1479 条）', () => {
   // 选「未归属」视图：1479 条，必须只渲染 SESSION_PAGE=60 条 + 「还有 N 条」
   const sel = { kind: 'unassigned' }
   // 直接用数据算期望值，不依赖 UI 内部常量
@@ -260,36 +274,42 @@ check('中栏会话条数远大于一屏时已分页（不一次画 1479 条）'
   return `总计 ${total} 条，出现分页文案`
 })
 
-check('只读态：setup 未完成时写按钮全部 disabled', () => {
+await check('只读态：setup 未完成时只出现引导入口，写按钮不渲染', async () => {
   // ActBtn 最终产出的是一个真实 <button>，只是被 Tip 包着；把树摊平后能拿到它。
-  // 只读态下凡是**会写盘的**按钮（归类 / 新建会话）必须 disabled=true。
+  //
+  // 语义在 GAP-01 修复后变了：setup 未完成时 Cockpit 直接 return SetupCard，
+  // **三栏根本不渲染**，所以不存在「写按钮被禁用」这回事 —— 写按钮压根没画。
+  // 唯一该出现的是引导卡片那两个按钮，而且它们必须**可点**：
+  // 它们是解除只读态的唯一入口，禁用它们等于把用户锁死在外面。
+  //
+  // ⚠ 必须用**真实** DATA 重渲一遍：上面的 tree 跑在 DATA_DONE 上（三栏用例需要），
+  // 拿它来断言引导态只会永远看不到引导卡片 —— 那是两条互斥路径，各喂各的数据。
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => DATA })
+  const pendingTree = await renderPage({ runEffects: true })
+
   const btns = []
   ;(function walk(n) {
     if (!n || typeof n !== 'object') return
     if (Array.isArray(n)) return n.forEach(walk)
     if (n.__el === 'button') btns.push(n.props)
     if (n.props) walk(n.props.children)
-  })(tree)
+  })(pendingTree)
 
-  const setupDone = DATA.setup && DATA.setup.status === 'done'
-  // 写按钮的判据：ActBtn 产出的按钮带 disabled 字段（只读按钮不带这个字段）
-  const writeBtns = btns.filter(b => Object.prototype.hasOwnProperty.call(b, 'disabled'))
-  if (setupDone) return `setup 已完成，只读约束不生效（写按钮 ${writeBtns.length} 个）`
-  if (writeBtns.length === 0) {
-    throw new Error(`setup 未完成但一个写按钮都没渲染（共 ${btns.length} 个按钮）—— 无法验证禁用逻辑`)
+  const LABELS = ['🆕 从零开始', '📥 导入已有']
+  const labels = btns.map(b => String(b.children ?? ''))
+  const missing = LABELS.filter(l => !labels.some(x => x.includes(l)))
+  if (missing.length) {
+    throw new Error(`setup 未完成但没有引导入口：缺 ${missing.join(' / ')}（现有按钮：${labels.join(', ') || '无'}）`)
   }
-  const notDisabled = writeBtns.filter(b => !b.disabled)
-  if (notDisabled.length) {
-    throw new Error(`setup.status=${DATA.setup.status} 但有 ${notDisabled.length} 个写按钮没 disabled：` +
-      notDisabled.map(b => b.children).join(', '))
+
+  // 引导按钮必须可点（disabled 不能为 true）
+  const guides = btns.filter(b => LABELS.some(l => String(b.children ?? '').includes(l)))
+  const locked = guides.filter(b => b.disabled)
+  if (locked.length) {
+    throw new Error(`引导按钮被禁用了 ${locked.length} 个（${locked.map(b => b.children).join(', ')}）` +
+      ` —— 它们是解除只读的唯一入口，禁用等于把用户锁死`)
   }
-  // tooltip 也要在：只读态不能只变灰，得说清为什么
-  const btnSrc = SRC.slice(SRC.indexOf('function ActBtn'), SRC.indexOf('function projectCategory'))
-  if (!/只读模式（引导未完成）— 写操作已禁用/.test(btnSrc)) {
-    throw new Error('ActBtn 只读态没有 tooltip 文案')
-  }
-  return `setup.status=${DATA.setup.status}，写按钮 ${writeBtns.length} 个全部 disabled` +
-    `（另有 ${btns.length - writeBtns.length} 个只读按钮正常可点），tooltip 文案在位`
+  return `setup.status=${DATA.setup.status}，引导入口 ${guides.length} 个且均可点（三栏按设计不渲染）`
 })
 
 try { unlinkSync(loaderFile) } catch (e) { /* 已删 */ }

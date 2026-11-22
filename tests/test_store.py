@@ -297,5 +297,108 @@ class TestProjectRootFallback(unittest.TestCase):
         self.assertGreater(len(tasks), 0, "真实 TASKS.md 里没有解析出任务 —— 根目录找错了")
 
 
+class TestProjectRootUpwards(unittest.TestCase):
+    """GAP-02 回归：装到宿主后（插件目录上层没有 TASKS.md）不许静默返回 tasks=0。
+
+    实测故障形态：插件被 `cp -r` 装到 `AppData\\Local\\hermes\\plugins\\hermes-cockpit`，
+    `project_root()` 固定往上三级 → `AppData\\Local\\hermes\\`，那里没有 TASKS.md，
+    于是 overview() 报 tasks=0、warnings=[]，用户以为任务全丢了。
+    """
+
+    def setUp(self):
+        self._old_env = os.environ.pop("HERMES_COCKPIT_HOME", None)
+
+    def tearDown(self):
+        if self._old_env is not None:
+            os.environ["HERMES_COCKPIT_HOME"] = self._old_env
+
+    def test_empty_dir_gives_warning_not_silent_zero(self):
+        """无 TASKS.md 的临时目录：tasks=0 但必须有明确告警（不是静默 0）。"""
+        with tempfile.TemporaryDirectory() as d:
+            payload = store.overview(d)
+            self.assertEqual(payload["stats"]["tasks"], 0)
+            self.assertTrue(payload["warnings"],
+                            "无 TASKS.md 时 warnings 为空 —— 这就是静默归零（GAP-02）")
+            joined = " ".join(payload["warnings"])
+            self.assertIn("找不到 TASKS.md", joined)
+            self.assertIn("数据目录未初始化", joined)
+            self.assertIn(str(d)[:10], joined)      # 告警里要能看出找的是哪个目录
+
+    def test_normal_root_stays_quiet(self):
+        """有 TASKS.md 的正常根：不该出现数据目录告警（避免狼来了）。"""
+        payload = store.overview(REPO)
+        self.assertNotIn("找不到 TASKS.md", " ".join(payload["warnings"]))
+
+    def test_upwards_search_is_not_fixed_depth(self):
+        """向上找根不写死层数：埋 5 层深的插件目录也要找到带 TASKS.md 的根。"""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "TASKS.md").write_text("# TASKS\n", encoding="utf-8")
+            deep = root / "a" / "b" / "c" / "d" / "e"
+            deep.mkdir(parents=True)
+            found = store._find_root_upwards(deep)
+            self.assertIsNotNone(found, "埋 5 层就找不到了 —— 说明层数被写死")
+            self.assertEqual(Path(found).resolve(), root.resolve())
+
+    def test_upwards_search_returns_none_when_absent(self):
+        """一路找到盘根都没有数据文件 → 返回 None，由调用方出告警（不假装成功）。"""
+        with tempfile.TemporaryDirectory() as d:
+            # 临时目录的父链上没有 TASKS.md/META.yaml，也没有 plugins/+desktop-plugins/
+            self.assertIsNone(store._find_root_upwards(d))
+
+    def test_env_var_beats_upwards_search(self):
+        """显式 env 一定优先于向上搜索（运维要能强指数据目录）。"""
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["HERMES_COCKPIT_HOME"] = d
+            try:
+                self.assertEqual(store.project_root().resolve(), Path(d).resolve())
+            finally:
+                os.environ.pop("HERMES_COCKPIT_HOME", None)
+
+    def test_declared_data_dir_is_read_from_plugin_yaml(self):
+        """plugin.yaml 的 data_dir 要被真的读出来（任务书要求 3）。"""
+        declared = store._declared_data_dir()
+        self.assertIsNotNone(declared, "plugin.yaml 的 data_dir 没被读到")
+        self.assertEqual(Path(declared).resolve(), REPO.resolve(),
+                         f"data_dir 解析成 {declared}，应为仓库根 {REPO}")
+
+    def test_declared_data_dir_without_data_falls_through(self):
+        """data_dir 指向的目录没有数据文件时继续向上找 —— 否则装到宿主仍是静默 0。
+
+        装到宿主时 plugin.yaml 的 `data_dir: ../../` 解析成 hermes 数据根，
+        那里没有 TASKS.md / META.yaml；此时**不能**把该目录当根返回，
+        否则 tasks 又是静默 0。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(store._has_data_files(Path(d)),
+                             "空临时目录不该被认成已初始化的根")
+            self.assertIsNotNone(store.data_dir_warning(d),
+                                 "空目录必须产出告警，否则就是静默 0")
+
+    def test_plugin_yaml_data_dir_is_declared(self):
+        """plugin.yaml 必须声明 data_dir，且缺数据时要靠告警兜底，不能静默归零。
+
+        为什么不断言「必须是绝对路径」：仓库要能克隆到任何机器、任何用户目录下直接工作，
+        写死 `C:/dev/...` 反而让插件在别人机器上失效。装到宿主时这一行要按 INSTALL.md
+        改成项目实际目录 —— 所以这里该锁的是**兜底行为**：data_dir 指错目录时
+        必须给出人话告警，而不是 tasks=0 且一声不响。
+        """
+        cfg = REPO / "plugins" / "hermes-cockpit" / "plugin.yaml"
+        line = next((ln for ln in cfg.read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("data_dir:")), None)
+        self.assertIsNotNone(line, "plugin.yaml 没有 data_dir")
+        value = line.split(":", 1)[1].strip()
+        self.assertTrue(value, "data_dir 是空值")
+
+        # 指对了 → 安静；指错了 → 必须有告警（这正是 GAP-02 的判据）
+        resolved = store._declared_data_dir()
+        if resolved is not None and store._has_data_files(resolved):
+            self.assertEqual(store.data_dir_warning(resolved), [])
+        else:
+            with tempfile.TemporaryDirectory() as d:
+                self.assertTrue(store.data_dir_warning(d),
+                                "数据目录没初始化时必须告警，否则就是静默 tasks=0")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

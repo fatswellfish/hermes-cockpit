@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -95,6 +96,49 @@ class TestHandleEntry(unittest.TestCase):
     def test_trailing_slash_tolerated(self):
         self.assertTrue(self.box.call("GET", "/overview/")["ok"])
         self.assertTrue(self.box.call("GET", "overview")["ok"])
+
+    def test_overview_stamp_is_two_tuple_when_taskfile_exists(self):
+        """缺陷 2 回归：有 TASKS.md 时 stamp 必须是 [mtime-ish, sha256] 二元组，不能是 None。
+
+        实测故障：tasks 读到了 2 条，stamp 仍是 null → 前端拿到 null 后一律 428，
+        所有写操作不可用。根因是「取数用的 root」与「取戳用的 root」不同源。
+        """
+        r = self.box.call("GET", "/overview")
+        self.assertTrue(r["ok"], r)
+        self.assertIsNotNone(r.get("stamp"),
+                             "有 TASKS.md 却给了 stamp=None —— 前端会一律 428")
+        self.assertIsInstance(r["stamp"], list)
+        self.assertEqual(len(r["stamp"]), 2, f"stamp 不是二元组：{r['stamp']!r}")
+        self.assertIsInstance(r["stamp"][0], str, "stamp[0] 应是文件身份串")
+        self.assertIsInstance(r["stamp"][1], str, "stamp[1] 应是内容哈希")
+        self.assertEqual(r["stamp"][1], hashlib.sha256(
+            (self.box.root / "TASKS.md").read_bytes()).hexdigest(),
+            "stamp[1] 与磁盘内容哈希不一致 —— 取戳的文件不是取数的那个")
+
+    def test_overview_stamp_matches_write_endpoint_stamp(self):
+        """同源证明：overview 给的戳必须能直接通过写端点的戳校验（不会自相矛盾地 409）。
+
+        这正是「两个 root 不同源」的症状：读的时候一个 root、校验的时候另一个 root，
+        要么拿不到戳（428），要么拿到的戳永远对不上（409）。
+        """
+        got = self.box.call("GET", "/overview")["stamp"]
+        r = api.handle("POST", "/tasks/toggle",
+                       {"root": str(self.box.root), "id": "T-001",
+                        "subtask_id": "T-001.1", "done": True, "expect_mtime": got})
+        self.assertTrue(r["ok"], f"overview 的戳被写端点拒了：{r}")
+        self.assertNotEqual(r["stamp"], got, "写成功后戳必须变化")
+
+    def test_overview_stamp_none_when_no_taskfile(self):
+        """反向对照：真的没有 TASKS.md 时 stamp=None，且必须有 warnings 提示。
+
+        没有这条对照，「stamp 非 None」的断言就可能被一个「随便给个值」的实现骗过。
+        """
+        empty = self.box.dir / "empty"
+        empty.mkdir()
+        r = api.handle("GET", "/overview", {"root": str(empty)})
+        self.assertTrue(r["ok"])
+        self.assertIsNone(r["stamp"])
+        self.assertIn("找不到 TASKS.md", " ".join(r["warnings"]))
 
     def test_toggle_ok(self):
         r = self.box.call("POST", "/tasks/toggle",

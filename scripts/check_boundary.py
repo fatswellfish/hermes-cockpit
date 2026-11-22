@@ -16,10 +16,18 @@
     HOST_RPC          host.request( / host.call( / host.invoke( / host.rpc(
     HERMES_HOME_ACCESS  自己拼 LOCALAPPDATA/hermes 或 ~/.hermes —— 绕过适配层 = 越界
     HOST_HOOK         on_session_start / register_hook / ctx.hook —— hook 注册只在适配层（Q-01）
+    HOST_REGISTER     适配层之外调用宿主入口 ctx.register_*（错误信息指向适配层）
 
 Q-01 的边界是「数据与网关」，不是「宿主 SDK 的任何调用」，所以：
     · `ctx.rest(` **一律放行** —— 它打到本插件自己的 dashboard/plugin_api.py，是对外接口不是宿主私有调用
     · `on_session_start` / `register_hook` / `ctx.hook` 属于宿主插件 API，换宿主就得改 ⇒ 只在适配层
+
+第六轮裁定（E2）新增一处**明确豁免**：插件目录 `__init__.py` 里的**入口函数定义**
+`def register(ctx)`（宿主约定的 entry point，签名由宿主校验），以及它调用
+`self._adapter().register_*` 的那一行。豁免是**按模式精确匹配**的：
+    · 只认 `__init__.py` 这个路径，且只认「定义 register」或「经 `_adapter()` 转调」
+    · 直接写 `ctx.register_system_prompt_section(...)` 仍然违规（宿主调用必须落适配层）
+    · `on_session_start` / `register_hook` / `ctx.hook` 的禁令**不因这条豁免而放宽**
 
 输出格式（WBS 要求）：`文件:行号  违规类型  该行内容`
 退出码：干净 0；有违规 1；用法错误 2。
@@ -87,6 +95,15 @@ RE_HERMES_HOME = re.compile(
     r"|join\s*\(\s*[^)\n]*?[\"']hermes[\"']",
     re.IGNORECASE,
 )
+
+# 插件入口函数的精确豁免（第六轮裁定 §三 第 1 步 / §四 要求 2）。
+# 宿主约定：插件目录 __init__.py 必须导出 register(ctx)，它在里面把 ctx 转交适配层。
+# 这里只豁免「定义」与「经 _adapter() 转调」两种写法；直接调 ctx.register_* 仍违规。
+RE_REGISTER_DEF = re.compile(r"^\s*(?:async\s+)?def\s+register\s*\(\s*(?:ctx|context)\s*\)")
+RE_REGISTER_FORWARD = re.compile(r"_adapter\s*\(\s*\)\s*\.\s*register_\w+\s*\(")
+
+# 适配层之外的宿主入口注册调用（HOST_REGISTER）。`ctx.rest(` 不在此列。
+RE_HOST_REGISTER = re.compile(r"\bctx\s*\.\s*register_\w+\s*\(")
 
 RE_ASSIGN = re.compile(r"([A-Za-z_][\w.]*)\s*=\s*(.*)")
 
@@ -191,9 +208,16 @@ def _block_comment_lines(lines: list[str], suffix: str) -> set[int]:
 # ── 单文件扫描（单测直接调用，不需要落盘）──────────────────────────────────
 
 
+def _is_plugin_entry_file(rel_path: str) -> bool:
+    """插件入口文件 = `<...>/plugins/<name>/__init__.py`（宿主约定 register(ctx) 的位置）。"""
+    p = rel_path.replace("\\", "/")
+    return p.endswith("/__init__.py") and "/plugins/" in "/" + p
+
+
 def scan_text(text: str, rel_path: str, suffix: str) -> list[Finding]:
     lines = text.splitlines()
     skip = _block_comment_lines(lines, suffix)
+    entry_file = _is_plugin_entry_file(rel_path)
 
     # 第一遍：文件内「绑定过宿主库的变量名」，用于 db = state_db() -> sqlite3.connect(db) 这类写法
     host_vars: set[str] = set()
@@ -236,6 +260,12 @@ def scan_text(text: str, rel_path: str, suffix: str) -> list[Finding]:
         # Q-01 放在最后：它只认三个精确令牌，前面几条是更严重的越界，命中哪个报哪个
         if RE_HOST_HOOK.search(code):
             findings.append(Finding(rel_path, n, "HOST_HOOK", raw))
+            continue
+
+        # 宿主入口注册：豁免只在插件 __init__.py 的「register 定义行」与「经 _adapter() 转调行」
+        if RE_HOST_REGISTER.search(code) and not (
+                entry_file and (RE_REGISTER_DEF.search(code) or RE_REGISTER_FORWARD.search(code))):
+            findings.append(Finding(rel_path, n, "HOST_REGISTER", raw))
             continue
 
     return findings

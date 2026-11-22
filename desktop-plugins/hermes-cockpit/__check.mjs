@@ -277,6 +277,59 @@ if (def) {
     assert.ok(rendered.length >= 2, `只有 ${rendered.length} 个可渲染项`)
     return rendered.join(', ')
   })
+
+  // ── ⑤b 缺陷 3 / GAP-01：引导未完成必须有前端入口 ──────────────────────
+  //
+  // 实测故障：后端 POST /setup/init 早就能用，但前端只有「只读（引导未完成）」提示，
+  // 用户看到灰按钮，**没有任何操作能完成引导** → D12 决策不可达。
+  // 这里在真跑出来的元素树上断言两个按钮真的存在，且各自真的发对应的 mode。
+  await check('⑤b 引导未完成 → 渲染出「🆕 从零开始 / 📥 导入已有」两个按钮', () => {
+    const probe = mod.__setupProbe
+    assert.ok(probe && typeof probe.SetupCard === 'function',
+              'plugin.js 未导出 __setupProbe.SetupCard（自测钩子缺失）')
+
+    const card = probe.SetupCard({ setup: { status: 'pending', mode: null, at: null }, reload: () => {} })
+    assert.ok(card, 'SetupCard 渲染为空')
+
+    const texts = []
+    const walk = n => {
+      if (n === null || n === undefined || typeof n !== 'object') return
+      const kids = n.props && n.props.children
+      if (typeof kids === 'string') texts.push(kids)
+      if (Array.isArray(kids)) kids.forEach(walk)
+      else walk(kids)
+    }
+    walk(card)
+    for (const label of probe.LABELS) {
+      assert.ok(texts.includes(label), `引导卡片里缺少按钮文案「${label}」，实际有：${texts.join(' | ')}`)
+    }
+    assert.ok(texts.some(t => t.includes('还没初始化')), '引导卡片缺少说明文字')
+    return `按钮：${probe.LABELS.join(' / ')}`
+  })
+
+  await check('⑤c 两个按钮真的发 POST /setup/init（mode=fresh / imported）', () => {
+    const probe = mod.__setupProbe
+    const card = probe.SetupCard({ setup: { status: 'pending' }, reload: () => {} })
+    const buttons = []
+    const walk = (n, out) => {
+      if (n === null || n === undefined || typeof n !== 'object') return
+      if (n.props && n.props.disabled !== undefined && typeof n.props.onClick === 'function') out.push(n)
+      const kids = n.props && n.props.children
+      if (Array.isArray(kids)) kids.forEach(k => walk(k, out))
+      else walk(kids, out)
+    }
+    walk(card, buttons)
+    assert.equal(buttons.length, 2, `引导卡片应有 2 个可点按钮，实际 ${buttons.length}`)
+    for (const b of buttons) {
+      assert.equal(b.props.disabled, false, '未在忙碌态时按钮不该 disabled（否则又是死路）')
+    }
+    // 点下去的真后果：发到 setup/init，且两个按钮分别对应 fresh / imported
+    assert.ok(/postJSON\(\s*'\/setup\/init'/.test(SRC.replace(/\n\s*/g, ' ')),
+              "引导卡片没有调用 postJSON('/setup/init')")
+    assert.ok(/btn\('fresh',\s*'🆕 从零开始'\)/.test(SRC), "缺少 fresh 按钮（文案须固定）")
+    assert.ok(/btn\('imported',\s*'📥 导入已有'\)/.test(SRC), "缺少 imported 按钮（文案须固定）")
+    return 'fresh / imported 各自对应一个按钮'
+  })
 }
 
 // ── ⑥ 写操作真语义 ────────────────────────────────────────────────────────

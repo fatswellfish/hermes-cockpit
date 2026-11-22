@@ -80,22 +80,99 @@ def assign_session(cwd: str | None, projects: list[dict]) -> str | None:
 # ── 任务（TASKS.md，人机共写）──────────────────────────────────────────────
 
 
+def _has_data_files(d: Path) -> bool:
+    """目录是否像一个已初始化的项目根（有 TASKS.md 或 META.yaml）。"""
+    return (d / TASKS_FILENAME).is_file() or (d / META_FILENAME).is_file()
+
+
+def _looks_like_root(d: Path) -> bool:
+    """逐级找根时的候选判据：有数据文件，**或**同时有 plugins/ 与 desktop-plugins/。
+
+    后一条是给插件源码仓用的：仓库刚 clone 下来、还没初始化 TASKS.md 时，
+    它仍然是一个「根」，不该被继续往上找。装到宿主时两条都不成立，
+    所以一直找到盘根，由调用方给出告警（见 data_dir_warning）。
+    """
+    if _has_data_files(d):
+        return True
+    return (d / "plugins").is_dir() and (d / "desktop-plugins").is_dir()
+
+
+def _find_root_upwards(start: Path) -> Path | None:
+    """从 start 向上逐级找项目根，**不限层数**，找到盘根都没有则返回 None。"""
+    cur = Path(start).resolve()
+    while True:
+        if _looks_like_root(cur):
+            return cur
+        if cur.parent == cur:               # 到盘根了
+            return None
+        cur = cur.parent
+
+
+def _declared_data_dir() -> Path | None:
+    """读插件自己 plugin.yaml 的 data_dir（相对插件目录），存在则用它。
+
+    用极简 YAML 行解析，不引 PyYAML（与 host_adapter.load_compat 同一策略）——
+    这里只取 data_dir 一个标量，不需要通用解析器。
+    """
+    cfg = _PLUGIN_ROOT / "plugin.yaml"
+    try:
+        if not cfg.is_file():
+            return None
+        for line in cfg.read_text(encoding="utf-8").splitlines():
+            s = line.split("#", 1)[0].rstrip()
+            if not s.startswith("data_dir:"):
+                continue
+            val = s.split(":", 1)[1].strip().strip("'\"")
+            if not val:
+                return None
+            p = Path(val)
+            cand = (p if p.is_absolute() else (_PLUGIN_ROOT / p)).resolve()
+            return cand if cand.is_dir() else None
+    except OSError:
+        return None
+    return None
+
+
 def project_root(explicit: str | os.PathLike | None = None) -> Path:
     """TASKS.md 所在的项目根目录。
 
-    优先级：显式参数 > 环境变量 HERMES_COCKPIT_HOME > 仓库根（本文件往上三级）。
+    优先级：显式参数 > 环境变量 HERMES_COCKPIT_HOME > plugin.yaml 的 data_dir
+            > 从插件目录向上逐级找（TASKS.md / META.yaml，**不写死层数**）> 插件目录
 
-    「往上三级」不是随手写的：本文件在 <repo>/plugins/hermes-cockpit/dashboard/store.py，
-    而 ARCHITECTURE.md 的数据层把 TASKS.md / META.yaml 放在**仓库根**（与 plugins/ 平级）。
-    回退到插件根（往上两级）会找不到 TASKS.md，overview() 就静默返回 tasks=0 ——
-    实测如此：真实文件里有 2 个任务，overview() 报 tasks: 0。
+    「往上三级」是旧写法，只对仓库内布局有效：本文件在
+    <repo>/plugins/hermes-cockpit/dashboard/store.py，而数据层把 TASKS.md / META.yaml
+    放在**仓库根**（与 plugins/ 平级）。**装到宿主后**（AppData\\Local\\hermes\\plugins\\hermes-cockpit）
+    往上三级是 AppData\\Local\\hermes\\，那里没有 TASKS.md → 静默返回 tasks=0（GAP-02 实测）。
+
+    ⇒ 现在改成向上**逐级**找，找到即用；找不到也不假装成功：
+    调用方用 `data_dir_warning()` 把「数据目录未初始化」写进 overview()["warnings"]。
     """
     if explicit:
         return Path(explicit)
     env = os.environ.get("HERMES_COCKPIT_HOME")
     if env:
         return Path(env)
-    return _PLUGIN_ROOT.parent.parent
+    declared = _declared_data_dir()
+    if declared is not None and _has_data_files(declared):
+        return declared
+    found = _find_root_upwards(_PLUGIN_ROOT)
+    return found if found is not None else (declared or _PLUGIN_ROOT)
+
+
+def data_dir_warning(root: str | os.PathLike | None = None) -> list[str]:
+    """数据目录没初始化时给出人话告警（不许静默返回 0）。
+
+    判据是**TASKS.md 不存在**：META.yaml 可以是空态，但一个「有看板有任务」的界面
+    不能凭空把任务数显示成 0。告警写清目录，用户能据此去设 HERMES_COCKPIT_HOME。
+    """
+    try:
+        r = Path(project_root(root))
+    except (OSError, ValueError):
+        return []
+    if (r / TASKS_FILENAME).is_file():
+        return []
+    return [f"找不到 TASKS.md，数据目录未初始化：{r}"
+            f"（请在 plugin.yaml 里指定 data_dir，或设置环境变量 HERMES_COCKPIT_HOME）"]
 
 
 def read_tasks(root: str | os.PathLike | None = None) -> tuple[str, list[dict]]:
@@ -230,6 +307,11 @@ def overview(root: str | os.PathLike | None = None,
     boards = ha.read_boards()
     _, tasks = read_tasks(root)
     all_warnings = list(warnings) + list(ha.last_warnings())
+
+    # Q-03 同类兜底：数据目录没初始化时**不许静默返回 tasks=0**（GAP-02 实测：
+    # 装到宿主后 root 指到 AppData\Local\hermes\，没有 TASKS.md，界面显示 0 个任务、
+    # 0 条告警，用户以为任务丢了）。这里补一条人话告警，界面直接显示。
+    all_warnings.extend(data_dir_warning(root))
 
     # 作用域先于归属：越界的会话既不进项目计数，也不进 unassigned
     sessions = [s for s in sessions_raw if in_scope(s, scope_start)]

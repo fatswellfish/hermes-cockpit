@@ -124,11 +124,129 @@ cached ??= {
 
 | 模块 | 文件 | 状态 |
 |---|---|---|
-| F1 适配层 | `plugins/hermes-cockpit/dashboard/host_adapter.py`（助理起草，15.6KB） | coder 验证中 |
-| F2 兼容区间 | `dashboard/compat.yaml` + `compat_status()` | ✅ 自测通过（判 0.23.2 兼容） |
-| F4 架构文档 | `docs/ARCHITECTURE.md`（S17/S18 产物） | ✅ 已写 |
-| 数据 | `TASKS.md` / `META.yaml` | ✅ 已建（含本项目自举任务） |
-| 骨架 | `plugins/hermes-cockpit/__init__.py` / `plugin.yaml` | ✅ 已建（`__init__.py` 是插件加载必需） |
+| **F1** 适配层 | `dashboard/host_adapter.py` + `scripts/check_boundary.py` | ✅ 9 文件零越界，负向对照有效 |
+| **F2** 兼容区间 | `dashboard/compat.yaml` + `compat_status()` | ✅ 判 0.23.2 兼容；区间外降级只读且有原因 |
+| **F4** 架构文档 | `docs/ARCHITECTURE.md`（S17/S18） | ✅ 已写 |
+| **A1** 数据访问层 | `host_adapter` 列名探测 + `mode=ro` | ✅ 66 列实测，`started_at` 非 `created_at` |
+| **A2** 任务解析器 | `core/taskfile.py`（parse / serialize / write_back） | ✅ 块外逐字节保留、折行保持、3 次写回字节稳定 |
+| **A3** 聚合视图 | `dashboard/store.py` `overview()` | ✅ 真实数据 14 项目 / 1503 会话 / 1479 未归属 |
+| **A4** 并发写 | `dashboard/fileio.py` mtime + 409 | ✅ 两进程竞争一成功一 409 |
+| **B1-B4** 写操作 | `plugin_api.py` 8 条路由 | ✅ 含 `expect_mtime` 闭环（不带戳一律 428） |
+| **C1-C5** 桌面界面 | `desktop-plugins/hermes-cockpit/plugin.js` | ✅ 三栏 + 5 个注册点，渲染冒烟 11/11 |
+| **D1** 配置结构 | `META.yaml` | ✅ 六个顶层块，`setup.at` 单向门 |
+| **D2** 首启引导 | 后端 `POST /setup/init` | ⚠️ **只有后端，前端无引导界面 → 见 GAP-01** |
+| **E1** 归属解析 | `store.py:55/60/240` | ✅ `manual > cwd 命中`，无归属返回 None |
+| **E2** 系统提示注入 | `core/inject.py` + adapter `register_system_prompt_section` + `__init__.py::register` | ✅ 注册/渲染/6 条硬要求全绿（细节见下节） |
+| **E3** 跑题提醒 | `core/drift.py` + skill 文本 | 🔄 不受本轮影响，按原任务书做 |
+
+## E2 落地实录（第六轮裁定后，2026-11-22 22:xx 实测）
+
+**三处改动，边界不破：**
+- `plugin.yaml` 的 `name` 是 `Hermes Cockpit` → 宿主取 **name 当 registry key**，
+  所以 `hermes plugins enable hermes-cockpit`（目录名）报 `No plugin named`；
+  正确写法是 `hermes plugins enable "Hermes Cockpit"`。
+- `__init__.py::register(ctx)` 只转调 `host_adapter.register_system_prompt_section`；
+  判定逻辑在 `core/inject.py`（纯函数，数据全经回调注入）。
+- `check_boundary.py` 新增 `HOST_REGISTER` 类型 + 一处**精确豁免**：
+  只认插件 `__init__.py` 里的 `def register(ctx)` 与 `_adapter().register_*` 转调行；
+  直接写 `ctx.register_*` 仍违规，`on_session_start`/`register_hook` 禁令不变。
+
+**宿主侧实测事实（0.23.2）：**
+| 事实 | 证据 |
+|---|---|
+| 通道签名 | `plugins_context.py:783` `register_system_prompt_section(id, content: str|Callable, position="after_memory", max_chars=4000)` |
+| id 固定 | 重复 id 抛 `ValueError`；实测用固定 `hermes-cockpit.project` |
+| 渲染点 | `agent/system_prompt.py:803`，after_memory → volatile 段 |
+| 空串 | 返回空串的 section 被**丢弃**（`_render_prompt_section_text`），不会留空标题 |
+| 超长 | 超 `max_chars` 的 section **整段丢弃**（不是截断）⇒ 自己在 80 字内卡住 |
+| 生效时机 | enabled 变更**不需要重启 App**：`reload_gateway_plugins()` 控制 socket 重发现即可；段落对**下一个新会话**生效 |
+| 系统提示落盘 | `sessions.system_prompt` 全表 0 非空（1507 行）⇒ **不能用它当注入证据**，证据只能用会话输出 |
+
+**证据（真会话原文，22:xx）：**
+```
+## Plugin Context: hermes-cockpit.project
+<!-- hermes-plugin-section-chars:56 -->
+
+Hermes Cockpit 已接入本项目。（探针：…）
+```
+（探针文本随后已换成真判定逻辑；现真实数据下按设计返回空串，见下）
+
+**当前真实数据下 E2 = 空串（设计使然，不是 bug）：**
+- `META.yaml` 的 `reminders.enabled: false`（D7 默认关）；
+- 即使打开：14 个项目的 `primary_path` 全在 `C:\dev\knowledge\...`，
+  `C:\dev\software-projects\hermes-cockpit` 等真实代码目录**一个都命中不了**；
+  `session_map` 里的 `demo` 在宿主项目表里不存在 ⇒ 也不归属。
+- 要看到段落需 `scripts/probe_e2_inject.py --apply`（临时开开关→真会话→还原，默认干跑）。
+
+**测试基线**：`py -3.10 -m pytest`（本机 `python` 是 3.14 **没装 pytest**；
+只有 `Programs\Python\Python310` 有 pytest 9.2.0 与 fastapi）。
+
+## 已知缺口（不自己改，派给 coder）
+
+### GAP-01【阻塞使用】D2 首启引导没有前端入口
+
+- 后端 `POST /setup/init` 已实现（`plugin_api.py:350/454/595`）
+- 前端 `plugin.js` **只有「只读（引导未完成）」提示，没有「从零开始 / 导入已有」选择界面**
+- 后果：用户打开面板看到只读灰按钮，**没有任何操作能完成引导** → D12 决策不可达
+- 判定依据：`grep -n "setup|引导|从零开始|导入已有" plugin.js` 只命中提示文案，无交互元素
+
+### GAP-02【阻塞使用】装到宿主后任务全空 —— 数据目录错位
+
+**实测证据**（同一份代码，两个位置跑出不同结果）：
+
+| 运行位置 | tasks | orphan_tasks | stamp |
+|---|---|---|---|
+| 项目目录 `C:\dev\software-projects\hermes-cockpit` | 有 | 有 T-001/T-002 | 有 |
+| 宿主副本 `AppData\Local\hermes\plugins\hermes-cockpit` | **0** | **[]** | **null** |
+
+**根因**：`TASKS.md` / `META.yaml` 只在项目目录存在，宿主副本里没有这两个文件
+（`ls` 确认 both 不存在）。插件按自身位置找数据 → 装到哪就找哪 → 宿主里找不到 → 任务全空。
+我当时的安装方式 `cp -r` 整个目录，把代码和数据混在一起搬，这是错的。
+
+**修法方向**（派给 coder，不自行改）：
+- 插件启动时先读 `plugin.yaml` 的 `data_dir`，读不到再回落项目目录
+- 或 `TASKS.md` / `META.yaml` 缺失时**自动初始化**（而非静默返回空）
+- **必须**补测试：在「无 TASKS.md 的临时目录」下启动，断言**报错或自动初始化**，不许静默返回 0
+
+## 插件启用状态（2026-11-22 实测）
+
+```
+$ hermes plugins list
+│ Hermes Cockpit │ enabled │     ← 本会话内启用
+│ todo-panel     │ enabled │
+```
+
+- **CLI 认的名字是 `Hermes Cockpit`（带空格大写，取自 plugin.yaml 的 name），不是 `hermes-cockpit`** ——
+  用目录名 `hermes plugins enable hermes-cockpit` 会报 `No plugin named`
+- 启用后宿主提示「Gateway reloaded plugins; nothing of this plugin needs a session or restart」，
+  **不需要重启 App**
+- `config.yaml:104-114` 的 `plugins.enabled` 白名单是权威列表，新增插件必须加进去
+
+## 已实测验证的宿主链路（启用后）
+
+| 环节 | 结果 | 怎么测的 |
+|---|---|---|
+| 插件被发现 | ✅ | 宿主 `_discover_dashboard_plugins()` 返回含 `hermes-cockpit` / tab `/cockpit` |
+| `router` 存在 | ✅ 真 `APIRouter` | `importlib` 加载后 `getattr(mod,"router")` |
+| 路由注册 | ✅ **8 条** | `FastAPI().include_router(router, prefix="/api/plugins/hermes-cockpit")` |
+| 后端取数 | ✅ 14 项目 / 1508 会话 / 1484 未归属 | `handle("GET","/overview",None)` 直调 |
+| 桌面 App 内视觉 | ❌ **未验** | 需人工看界面 |
+
+
+## 测试基线（每次交付都要重跑，四条各自独立裸跑）
+
+| 命令 | 当前 |
+|---|---|
+| `py -3.10 -m pytest` | **215 passed / 1 skipped / 33 subtests**（E2 新增 37 条） |
+| `node desktop-plugins/hermes-cockpit/__check.mjs` | 16/16 |
+| `node desktop-plugins/hermes-cockpit/__render_check.mjs` | 11/11 |
+| `py -3.10 scripts/check_boundary.py` | exit 0（10 文件） |
+
+> ⚠️ 不许把四条拼进 `&&` 链再 `tail` —— 那样拿到的是 `tail` 的退出码，会假绿。
+> ⚠️ 裸 `python` 是 3.14，**没装 pytest**：直接 `python -m pytest` 会 `No module named pytest`。
+> 必须用 `C:\Users\Martin WANG\AppData\Local\Programs\Python\Python310\python.exe`。
+
+
 
 ## coder 第一轮任务（进行中）
 

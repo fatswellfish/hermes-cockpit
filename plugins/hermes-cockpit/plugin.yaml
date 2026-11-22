@@ -17,6 +17,13 @@ desktop: ../../desktop-plugins/hermes-cockpit/plugin.js
 compat: dashboard/compat.yaml
 
 # 自有数据目录（人可直读，任何工具可读写）
+#
+# 源码仓里是 `../../`（仓库根，TASKS.md 在那）。
+# ⚠️ 装到宿主后这个相对路径指向 AppData\Local\hermes\ —— 那里没有 TASKS.md，
+#    所以**安装时必须把这一行改成项目实际目录**（见 INSTALL.md）。
+# 不在这里写死绝对路径：仓库要能克隆到任何机器、任何用户目录下直接工作。
+# store.project_root() 读它；目录里没有数据文件时继续向上逐级找，
+# 最后仍找不到就在 overview()["warnings"] 里报出来（不静默归零）。
 data_dir: ../../
 
 # 插件自身的健康状态（面板顶部横幅用）

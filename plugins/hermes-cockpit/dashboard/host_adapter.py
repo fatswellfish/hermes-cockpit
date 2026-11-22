@@ -540,6 +540,34 @@ def _unquote_path(value) -> str | None:
 
 
 
+# ── 系统提示注入（E2）唯一写入口 ────────────────────────────────────────────
+#
+# 宿主只承认一个「可写 prompt」的通道：ctx.register_system_prompt_section。
+# 实测（宿主 0.23.2，hermes_cli/plugins_context.py:783）：
+#   · id 必须匹配 ^[a-z0-9][a-z0-9._-]{0,127}$，**全局唯一**，重复注册抛 ValueError
+#   · content 可以是 str 或 callable(session_info) -> str；callable 拿只读映射
+#   · max_chars 上限 4000（DEFAULT/MAX_SYSTEM_PROMPT_SECTION_CHARS）
+#   · 返回**空串**的 section 被宿主直接丢弃（plugins_dispatch._render_prompt_section_text），
+#     这是「未归项目时不污染 prompt」的官方手段，不需要自己拼「无」字
+#   · on_session_start 是纯观察钩子，返回值被 ignore —— 拿它注入必然无效
+#
+# 本文件是唯一允许碰宿主 SDK 的地方（S10），所以 register 只转调这里。
+
+SECTION_ID = "hermes-cockpit.project"
+SECTION_MAX_CHARS = 4000
+
+
+def register_system_prompt_section(ctx, render) -> object:
+    """把 *render* 挂成系统提示段落，返回宿主的 PluginRegistration 句柄。
+
+    *render* 的签名为 ``render(session_info: Mapping[str, str]) -> str``。
+    签名/参数不合规时宿主抛 ValueError/TypeError，这里**不吞**：注册失败必须让
+    调用方（__init__.register）看见，否则会变成「装了但没注入」的静默失败。
+    """
+    return ctx.register_system_prompt_section(
+        SECTION_ID, render, position="after_memory", max_chars=SECTION_MAX_CHARS)
+
+
 # ── 时间工具 ────────────────────────────────────────────────────────────────
 
 

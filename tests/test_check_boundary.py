@@ -231,5 +231,45 @@ class TestScannerDoesNotOverreach(unittest.TestCase):
         self.assertEqual([f.kind for f in findings], ["HOST_HOOK"])
 
 
+class TestRegisterEntryPointExemption(unittest.TestCase):
+    """第六轮裁定 §三 第 1 步 / §四 要求 2：
+
+    插件 __init__.py 的入口函数 `def register(ctx)` 与「经 _adapter() 转调」那一行豁免；
+    直接调宿主 `ctx.register_*` 仍违规；hook 三令不因这条豁免而放宽。
+    """
+
+    ENTRY = "plugins/hermes-cockpit/__init__.py"
+    OTHER = "plugins/hermes-cockpit/dashboard/plugin_api.py"
+
+    def test_forward_through_adapter_is_exempt(self):
+        src = ("def register(ctx) -> None:\n"
+               "    _adapter().register_system_prompt_section(ctx, _render)\n")
+        self.assertEqual(cb.scan_text(src, self.ENTRY, ".py"), [])
+
+    def test_bare_register_def_is_exempt(self):
+        """入口函数定义行本身（带 ctx 形参）不算越界 —— 它是宿主约定的签名。"""
+        self.assertEqual(cb.scan_text("def register(ctx):\n    return None\n", self.ENTRY, ".py"), [])
+
+    def test_calling_host_api_directly_in_entry_is_flagged(self):
+        """入口文件里直接碰宿主 API 仍然违规：一切宿主调用必须落适配层。"""
+        src = "def register(ctx):\n    ctx.register_system_prompt_section('x', 'y')\n"
+        findings = cb.scan_text(src, self.ENTRY, ".py")
+        self.assertEqual([(f.line, f.kind) for f in findings], [(2, "HOST_REGISTER")])
+
+    def test_host_api_outside_entry_file_is_flagged(self):
+        src = "ctx.register_system_prompt_section('x', 'y')\n"
+        findings = cb.scan_text(src, self.OTHER, ".py")
+        self.assertEqual([(f.line, f.kind) for f in findings], [(1, "HOST_REGISTER")])
+
+    def test_hook_ban_survives_the_cli_exemption(self):
+        """裁定明文：on_session_start / register_hook 的禁令保留。"""
+        for label, snippet in HOOK_VIOLATIONS:
+            with self.subTest(label):
+                src = "def register(ctx):\n    " + snippet.strip() + "\n"
+                findings = cb.scan_text(src, self.ENTRY, ".py")
+                self.assertEqual([f.kind for f in findings], ["HOST_HOOK"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

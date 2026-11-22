@@ -646,6 +646,76 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
 
 // ── 主页面：顶部总览条 + 三栏 ──────────────────────────────────────────────
 
+/**
+ * 首启引导卡片（缺陷 3 / GAP-01）。
+ *
+ * 后端 `POST /setup/init` 早就能用，但前端只有一个「只读（引导未完成）」提示，
+ * **没有任何操作能完成引导** → D12 决策不可达，用户看到灰按钮却无路可走。
+ * 这里给两个按钮：文案固定（任务书要求，不许自由发挥）。
+ *
+ * 失败分支复用 postJSON 的既有语义（409 stale 自动刷新 / 403 原样透出原因），
+ * 不另写一套判断——两套判断迟早会打架。
+ */
+function SetupCard({ setup, reload }) {
+  const [busy, setBusy] = useState(null)
+  const [msg, setMsg] = useState(null)
+
+  async function choose(mode) {
+    if (busy) return
+    setBusy(mode)
+    setMsg(null)
+    const r = await postJSON('/setup/init', { mode }, reload)
+    setBusy(null)
+    if (r.ok) {
+      reload()                                  // 成功后重取，界面自己会切出只读态
+      return
+    }
+    // 409 stale 已在 postJSON 里提示 + 自动 reload；这里只补一条不重复的说明
+    setMsg(r.code === 409 && r.reason === 'stale'
+      ? '引导状态已被改动，正在刷新…'
+      : r.message)
+  }
+
+  const btn = (mode, label) =>
+    jsx('button', {
+      type: 'button',
+      disabled: Boolean(busy),
+      onClick: () => choose(mode),
+      className: cn('rounded px-3 py-1.5 text-xs',
+        'hover:bg-(--chrome-action-hover) hover:text-foreground'),
+      style: {
+        border: '1px solid var(--ui-stroke-secondary)',
+        color: 'var(--ui-text-primary)',
+        opacity: busy && busy !== mode ? 0.5 : 1
+      },
+      children: busy === mode ? `${label}…` : label
+    })
+
+  return jsxs('div', {
+    className: 'flex h-full flex-col items-center justify-center gap-3 p-6 text-center',
+    children: [
+      jsx('div', {
+        className: 'text-sm',
+        style: { color: 'var(--ui-text-primary)' },
+        children: '项目中枢还没初始化'
+      }),
+      jsx('div', {
+        className: 'text-xs',
+        style: { color: 'var(--ui-text-quaternary)' },
+        children: `当前引导状态：${(setup && setup.status) || 'pending'}。选择一种方式开始（选定后不可反向切换）。`
+      }),
+      jsxs('div', {
+        className: 'flex gap-2',
+        children: [
+          btn('fresh', '🆕 从零开始'),
+          btn('imported', '📥 导入已有')
+        ]
+      }),
+      msg ? jsx('div', { className: 'text-xs', style: { color: WARN }, children: msg }) : null
+    ]
+  })
+}
+
 function Cockpit({ readonly }) {
   const { data, err, reload } = useOverview(POLL_MS)
   const [selected, setSelected] = useState(null)
@@ -700,6 +770,12 @@ function Cockpit({ readonly }) {
   // C5/S8：引导未完成（setup.status !== 'done'）→ 后端会 409 scope_blocked，
   // 界面必须同步进只读态，不能等用户点了才失败。
   const isReadonly = Boolean(readonly) || Boolean(data.setup && data.setup.status !== 'done')
+
+  // 缺陷 3 / GAP-01：引导未完成时**给界面一个真正的入口**。
+  // 只把三栏画成灰的，用户没有任何操作能完成引导 → D12 决策不可达。
+  if (data.setup && data.setup.status !== 'done') {
+    return jsx(SetupCard, { setup: data.setup, reload })
+  }
 
   const head = [
     `${stats.projects || 0} 项目`,
@@ -820,3 +896,11 @@ export default {
  * （409 必须 reload、403 必须透出原因、200 必须零误报）。
  */
 export const __writeProbe = { postJSON }
+
+/**
+ * 自测钩子（__check.mjs 用）：引导卡片。
+ *
+ * 缺陷 3 的验收点是「引导未完成时界面里真的有两个按钮能发 setup/init」，
+ * 而 render() 出来的只是一棵普通对象树，断言可以直接在树上做。
+ */
+export const __setupProbe = { SetupCard, LABELS: ['🆕 从零开始', '📥 导入已有'] }
