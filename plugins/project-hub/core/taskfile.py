@@ -47,7 +47,7 @@ import re
 # ── 字段契约 ────────────────────────────────────────────────────────────────
 
 FIELDS = ("id", "title", "status", "progress", "project", "subtasks",
-          "due", "snapshot", "blocker", "updated", "session")
+          "due", "snapshot", "blocker", "updated", "session", "source")
 
 # 子任务结构：{id, title, done}
 SUBTASK_FIELDS = ("id", "title", "done")
@@ -79,8 +79,18 @@ FIELD_LINE_RE = re.compile(
 )
 # 引用行：> 更新：2026-11-21 22:30
 UPDATE_LINE_RE = re.compile(r"^\s*>\s*(?P<key>更新|更新时间)\s*[:：]\s*(?P<val>.*?)\s*$")
-# 会话：**会话**：<session_id> 或 > 会话：<id>
-SESSION_LINE_RE = re.compile(r"^\s*(?:>\s*)?\*\*会话\*\*\s*[:：]\s*(?P<val>.*?)\s*$")
+# 会话：**会话**：<session_id> 或 > 会话：<id> 或 > session: <id>
+# 英文写法来自 TASKS.agent.md 模板；两种都收，免得书写风格不同就丢归属。
+SESSION_LINE_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:\*\*会话\*\*|会话|session)\s*[:：]\s*(?P<val>.*?)\s*$",
+    re.IGNORECASE,
+)
+# 来源：> source: agent | work | home
+# 这一行决定任务归哪一类。按文件名也能推，但同一条可以从 agent 文件里
+# 标成 work（例如 agent 帮忙拆解的日常工作），所以显式声明优先。
+SOURCE_LINE_RE = re.compile(
+    r"^\s*>\s*(?:source|来源)\s*[:：]\s*(?P<val>.*?)\s*$", re.IGNORECASE
+)
 
 KEY_TO_FIELD = {"截止": "due", "快照": "snapshot", "阻塞": "blocker",
                 "更新": "updated", "更新时间": "updated"}
@@ -90,10 +100,27 @@ class TaskFileError(ValueError):
     """TASKS.md 结构不可解析（例如同一个任务 id 出现两次）。"""
 
 
+def _looks_like_session_id(val: str) -> bool:
+    """这个值像不像一个真实的会话 id。
+
+    Hermes 的会话 id 形如 `local-41efc402b892f5638...`：前缀 + 长十六进制串。
+    这里不做严格格式校验（上游改格式时不该把整份清单读废），
+    只排除明显是说明文字的情况——含空白、中文、或短于 8 字符。
+    """
+    if not val or len(val) < 8:
+        return False
+    if any(ch.isspace() for ch in val):
+        return False
+    # 含中文 = 说明文字，不是 id
+    if any("\u4e00" <= ch <= "\u9fff" for ch in val):
+        return False
+    return True
+
+
 def _empty_task() -> dict:
     return {"id": "", "title": "", "status": "todo", "progress": 0,
             "project": None, "subtasks": [], "due": None, "snapshot": None,
-            "blocker": None, "updated": None, "session": None}
+            "blocker": None, "updated": None, "session": None, "source": None}
 
 
 def _parse_heading(rest: str) -> dict | None:
@@ -178,6 +205,7 @@ def parse(text: str) -> list[dict]:
     tasks: list[dict] = []
     cur: dict | None = None
     cur_fence = False          # 当前是否在 ``` 代码块内（代码块里的 ## 不算任务）
+    cur_comment = False        # 当前是否在 <!-- HTML 注释 --> 内（注释里的内容不算任务）
     _last_field: str | None = None   # 最近一次赋值成功的字段（用于裸续行归属）
     seen: set[str] = set()
     # 每个父任务已占用的子任务 id（显式 + 自动分配的都算），用于 D-03 的不撞号编号
@@ -191,6 +219,19 @@ def parse(text: str) -> list[dict]:
             cur_fence = not cur_fence
             continue
         if cur_fence:
+            continue
+
+        # HTML 注释：<!-- ... --> 内的内容一律不解析。
+        # 模板文件用注释存示例，用户也可能用注释临时停用一条任务；
+        # 不认它就会把注释放进清单里（实测：两个空模板各被读成 1 条假任务）。
+        if cur_comment:
+            if "-->" in line:
+                cur_comment = False
+            continue
+        if "<!--" in line:
+            # 同一行开了又关（<!-- x -->）不影响后续行
+            after = line.split("<!--", 1)[1]
+            cur_comment = "-->" not in after
             continue
 
         # 「格式约定」之后全部不解析
@@ -246,7 +287,18 @@ def parse(text: str) -> list[dict]:
 
         sm = SESSION_LINE_RE.match(line)
         if sm:
-            cur["session"] = sm.group("val") or None
+            val = (sm.group("val") or "").strip()
+            # 只收长得像会话 id 的值：占位符（「（可不填…）」）和说明文字
+            # 不该被当成归属，否则「本会话引出的 todo」会查出一个不存在的会话。
+            cur["session"] = val if _looks_like_session_id(val) else None
+            _last_field = None
+            continue
+
+        srcm = SOURCE_LINE_RE.match(line)
+        if srcm:
+            val = (srcm.group("val") or "").strip().lower()
+            # 只认三个合法取值；写错不静默吞掉，留给调用方按文件名兜底。
+            cur["source"] = val if val in ("agent", "work", "home") else None
             _last_field = None
             continue
 

@@ -141,17 +141,57 @@ def _check_stamp(path: Path, expect_mtime: Any, if_unmodified_since: Any) -> Any
     return current
 
 
-def _read_tasks_with_stamp(root: Path) -> tuple[str, list[dict], Any]:
-    p = root / store.TASKS_FILENAME
+def _task_ref(body: dict):
+    """从请求体里取出「这条任务属于哪个文件」的线索。
+
+    前端从 overview 里拿到过 `source_file`，改动时带上它最准确；
+    没带就退回用任务 id，由 `_taskfile_for` 去三份文件里找。
+    """
+    if not isinstance(body, dict):
+        return None
+    return body.get("source_file") or body.get("id")
+
+
+def _taskfile_for(root: Path, task_or_id) -> Path:
+    """这条任务该读写哪个文件。
+
+    任务按来源分三份（TASKS.agent/work/home.md），写回时必须落回**原文件**，
+    否则会把办公的勾选写进 agent 那份。判定顺序：
+
+    ① 调用方直接给了文件名（前端从 overview 拿到 source_file）→ 用它
+    ② 只给了任务 id → 在三份文件里找这个 id 在哪份
+    ③ 都找不到 → 回落到旧的单文件 TASKS.md（兼容未升级的部署）
+    """
+    name = task_or_id if isinstance(task_or_id, str) and task_or_id.endswith(".md") else None
+    if name:
+        return root / name
+
+    tid = task_or_id if isinstance(task_or_id, str) else None
+    if tid:
+        for filename, _ in store.TASK_SOURCES:
+            p = root / filename
+            if not p.is_file():
+                continue
+            try:
+                if any(t["id"] == tid for t in tf.parse(p.read_text(encoding="utf-8"))):
+                    return p
+            except (OSError, tf.TaskFileError):
+                continue
+
+    return root / store.TASKS_FILENAME
+
+
+def _read_tasks_with_stamp(root: Path, ref=None) -> tuple[str, list[dict], Any]:
+    p = _taskfile_for(root, ref)
     if not p.is_file():
         raise ApiError(404, "no_taskfile", f"{p} 不存在")
     text, stamp = fio.read_with_stamp(p)
     return text, tf.parse(text), stamp
 
 
-def _write_tasks(root: Path, original: str, tasks: list[dict], expect: Any) -> Any:
+def _write_tasks(root: Path, original: str, tasks: list[dict], expect: Any, ref=None) -> Any:
     """落盘唯一入口：taskfile.write_back（**绝不调 serialize**，Q-06）。"""
-    p = root / store.TASKS_FILENAME
+    p = _taskfile_for(root, ref)
     try:
         return fio.write_if_unchanged(p, tf.write_back(original, tasks), expect)
     except fio.StaleWrite as e:
@@ -406,13 +446,36 @@ def _overview_with_stamp(root: Path) -> dict:
     戳必须在**这一层**附加，不能进 store.overview()：store 是纯只读聚合层，
     不该引 fileio 的写路径依赖（S10 边界）。而写端点校验用的正是
     `_read_tasks_with_stamp()` 返回的同一个戳，两边同源才不会自相矛盾的 409。
+
+    任务分三份文件后，戳也变成三份：前端勾哪条就带哪个文件的戳
+    （overview 里每条任务都有 `source_file`）。这里给出 {文件名: 戳} 的映射，
+    并保留一个顶层 `stamp`（取第一份存在的）给尚未更新的调用方。
     """
     payload = store.overview(root)
+
+    stamps: dict[str, list] = {}
+    for filename, _ in store.TASK_SOURCES:
+        p = root / filename
+        if not p.is_file():
+            continue
+        try:
+            _, stamp = fio.read_with_stamp(p)
+            stamps[filename] = list(stamp)
+        except (OSError, fio.FileIOError):
+            # 单个文件读不了不该让整个 overview 挂掉——跳过它，其余照常给。
+            continue
+
+    payload["stamps"] = stamps
+    if stamps:
+        payload["stamp"] = next(iter(stamps.values()))
+        return payload
+
+    # 兼容旧的单文件布局
     try:
         _, _, stamp = _read_tasks_with_stamp(root)
         payload["stamp"] = list(stamp)
     except ApiError:
-        payload["stamp"] = None      # 没有 TASKS.md：前端会拿到 428 并给出明确提示
+        payload["stamp"] = None      # 没有任务文件：前端会拿到 428 并给出明确提示
     return payload
 
 
@@ -429,18 +492,19 @@ def _handle_route(method: str, path: str, body: dict | None) -> tuple[int, dict]
         def run_tasks():
             root = _root(b.get("root"))
             _guard_writable(root)
-            text, tasks, stamp = _read_tasks_with_stamp(root)
-            _check_stamp(root / store.TASKS_FILENAME, b.get("expect_mtime"),
+            ref = _task_ref(b)
+            text, tasks, stamp = _read_tasks_with_stamp(root, ref)
+            _check_stamp(_taskfile_for(root, ref), b.get("expect_mtime"),
                          b.get("if_unmodified_since"))
             if p == "/tasks/toggle":
                 new = toggle_subtask(tasks, b.get("id"), b.get("subtask_id"), b.get("done"))
-                return {"task": _find(new, b["id"]), "stamp": list(_write_tasks(root, text, new, stamp))}
+                return {"task": _find(new, b["id"]), "stamp": list(_write_tasks(root, text, new, stamp, ref))}
             if p == "/tasks/add":
                 new, task_id = add_task(tasks, b)
                 return {"id": task_id, "task": _find(new, task_id),
-                        "stamp": list(_write_tasks(root, text, new, stamp))}
+                        "stamp": list(_write_tasks(root, text, new, stamp, ref))}
             new = update_task(tasks, b.get("id"), b)
-            return {"task": _find(new, b["id"]), "stamp": list(_write_tasks(root, text, new, stamp))}
+            return {"task": _find(new, b["id"]), "stamp": list(_write_tasks(root, text, new, stamp, ref))}
         return _handle(run_tasks)
 
     if m == "DELETE" and p.startswith("/tasks/") and p.count("/") == 2:
@@ -449,11 +513,12 @@ def _handle_route(method: str, path: str, body: dict | None) -> tuple[int, dict]
         def run_delete():
             root = _root(b.get("root"))
             _guard_writable(root)
-            text, tasks, stamp = _read_tasks_with_stamp(root)
-            _check_stamp(root / store.TASKS_FILENAME, b.get("expect_mtime"),
+            ref = _task_ref(b)
+            text, tasks, stamp = _read_tasks_with_stamp(root, ref)
+            _check_stamp(_taskfile_for(root, ref), b.get("expect_mtime"),
                          b.get("if_unmodified_since"))
             new = delete_task(tasks, task_id)
-            return {"deleted": task_id, "stamp": list(_write_tasks(root, text, new, stamp))}
+            return {"deleted": task_id, "stamp": list(_write_tasks(root, text, new, stamp, ref))}
         return _handle(run_delete)
 
     if m == "POST" and p == "/sessions/assign":
@@ -527,11 +592,12 @@ if router is not None:                      # pragma: no cover - 需要 fastapi
         def run():
             root = _root(body.get("root"))
             _guard_writable(root)
-            text, tasks, stamp = _read_tasks_with_stamp(root)
-            _check_stamp(root / store.TASKS_FILENAME, expect, header)
+            ref = _task_ref(body)
+            text, tasks, stamp = _read_tasks_with_stamp(root, ref)
+            _check_stamp(_taskfile_for(root, ref), expect, header)
             new = toggle_subtask(tasks, body.get("id"), body.get("subtask_id"),
                                  body.get("done"))
-            new_stamp = _write_tasks(root, text, new, stamp)
+            new_stamp = _write_tasks(root, text, new, stamp, ref)
             task = _find(new, body["id"])
             return {"task": task, "stamp": list(new_stamp)}
 
@@ -545,10 +611,11 @@ if router is not None:                      # pragma: no cover - 需要 fastapi
         def run():
             root = _root(body.get("root"))
             _guard_writable(root)
-            text, tasks, stamp = _read_tasks_with_stamp(root)
-            _check_stamp(root / store.TASKS_FILENAME, expect, header)
+            ref = _task_ref(body)
+            text, tasks, stamp = _read_tasks_with_stamp(root, ref)
+            _check_stamp(_taskfile_for(root, ref), expect, header)
             new, task_id = add_task(tasks, body)
-            new_stamp = _write_tasks(root, text, new, stamp)
+            new_stamp = _write_tasks(root, text, new, stamp, ref)
             return {"id": task_id, "task": _find(new, task_id), "stamp": list(new_stamp)}
 
         status, payload = _handle(run)
@@ -561,11 +628,12 @@ if router is not None:                      # pragma: no cover - 需要 fastapi
         def run():
             root = _root(body.get("root"))
             _guard_writable(root)
-            text, tasks, stamp = _read_tasks_with_stamp(root)
-            _check_stamp(root / store.TASKS_FILENAME, expect, header)
+            ref = _task_ref(body)
+            text, tasks, stamp = _read_tasks_with_stamp(root, ref)
+            _check_stamp(_taskfile_for(root, ref), expect, header)
             task_id = body.get("id")
             new = update_task(tasks, task_id, body)
-            new_stamp = _write_tasks(root, text, new, stamp)
+            new_stamp = _write_tasks(root, text, new, stamp, ref)
             return {"task": _find(new, task_id), "stamp": list(new_stamp)}
 
         status, payload = _handle(run)
@@ -578,10 +646,11 @@ if router is not None:                      # pragma: no cover - 需要 fastapi
         def run():
             root = _root((body or {}).get("root"))
             _guard_writable(root)
-            text, tasks, stamp = _read_tasks_with_stamp(root)
-            _check_stamp(root / store.TASKS_FILENAME, expect, header)
+            ref = _task_ref(body or {})
+            text, tasks, stamp = _read_tasks_with_stamp(root, ref)
+            _check_stamp(_taskfile_for(root, ref), expect, header)
             new = delete_task(tasks, task_id)
-            new_stamp = _write_tasks(root, text, new, stamp)
+            new_stamp = _write_tasks(root, text, new, stamp, ref)
             return {"deleted": task_id, "stamp": list(new_stamp)}
 
         status, payload = _handle(run)

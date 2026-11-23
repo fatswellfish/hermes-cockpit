@@ -289,16 +289,28 @@ class TestProjectRootFallback(unittest.TestCase):
         self.assertTrue((root / "TASKS.md").is_file(), "回退目录里必须真的有 TASKS.md")
 
     def test_overview_sees_real_tasks(self):
-        """用真实仓库根的 TASKS.md 数任务：不能是 0（假空比报错更难发现）。"""
+        """用真实仓库根的任务文件数任务：不能是 0（假空比报错更难发现）。"""
         old = os.environ.pop("HERMES_COCKPIT_HOME", None)
         try:
             _, tasks = store.read_tasks()
         finally:
             if old is not None:
                 os.environ["HERMES_COCKPIT_HOME"] = old
-        real = tf.parse((REPO / "TASKS.md").read_text(encoding="utf-8"))
-        self.assertEqual(len(tasks), len(real))
-        self.assertGreater(len(tasks), 0, "真实 TASKS.md 里没有解析出任务 —— 根目录找错了")
+
+        # 任务已按来源拆成三份文件（agent / work / home），
+        # 期望值必须按三份合计，不能只看旧的单文件 TASKS.md。
+        expected = 0
+        for filename, _ in store.TASK_SOURCES:
+            p = REPO / filename
+            if p.is_file():
+                expected += len(tf.parse(p.read_text(encoding="utf-8")))
+        self.assertEqual(len(tasks), expected)
+        self.assertGreater(len(tasks), 0, "真实任务文件里没有解析出任务 —— 根目录找错了")
+
+        # 每条都要带 source，否则界面无法按「人看 / 机器看」分组
+        for t in tasks:
+            self.assertIn(t.get("source"), ("agent", "work", "home"),
+                          f"{t['id']} 的 source 不合法：{t.get('source')!r}")
 
 
 class TestProjectRootUpwards(unittest.TestCase):

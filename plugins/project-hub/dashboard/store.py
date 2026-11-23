@@ -43,8 +43,19 @@ ha = _ml.host_adapter()
 meta_mod = _ml.meta()
 tf = _ml.taskfile()
 
-TASKS_FILENAME = "TASKS.md"
+TASKS_FILENAME = "TASKS.md"         # 旧的单文件布局，仅作兼容回落
 META_FILENAME = "META.yaml"
+
+# 任务按来源分三份文件（用户 2026-11-23 定案）：
+#   agent —— agent 自己写（做完一步勾一笔），人只看
+#   work  —— 办公辅助 / 日常工作，人写
+#   home  —— 家里要办的事，人写
+# 顺序即界面上的展示顺序。
+TASK_SOURCES = (
+    ("TASKS.agent.md", "agent"),
+    ("TASKS.work.md", "work"),
+    ("TASKS.home.md", "home"),
+)
 
 
 
@@ -191,12 +202,52 @@ def data_dir_warning(root: str | os.PathLike | None = None) -> list[str]:
 
 
 def read_tasks(root: str | os.PathLike | None = None) -> tuple[str, list[dict]]:
-    """读 TASKS.md，返回（原文, 任务列表）。文件不存在时返回 ("", [])，不报错。"""
-    p = Path(project_root(root)) / TASKS_FILENAME
-    if not p.is_file():
-        return "", []
-    text = p.read_text(encoding="utf-8")
-    return text, tf.parse(text)
+    """读任务文件，返回（原文, 任务列表）。文件不存在时不报错。
+
+    任务按来源分成三份文件（用户 2026-11-23 定案），全部读入后合并：
+
+        TASKS.agent.md   agent 自动化 —— agent 自己写，人只看
+        TASKS.work.md    办公辅助 / 日常工作 —— 人写，agent 可读
+        TASKS.home.md    家里要办的事 —— 人写，agent 可读
+
+    每条的 `source` 标明来自哪类（文件内写了 `> source:` 就用写的，
+    否则按文件名推），`source_file` 记具体文件名，便于写回原文件。
+
+    兼容：三份都不存在时才回落到旧的单文件 `TASKS.md`，
+    这样已有部署升级后不会突然「任务归零」。
+    """
+    base = Path(project_root(root))
+    tasks: list[dict] = []
+    texts: list[str] = []
+    found = False
+
+    for filename, default_source in TASK_SOURCES:
+        p = base / filename
+        if not p.is_file():
+            continue
+        found = True
+        text = p.read_text(encoding="utf-8")
+        texts.append(text)
+        for task in tf.parse(text):
+            if not task.get("source"):
+                task["source"] = default_source
+            task["source_file"] = filename
+            tasks.append(task)
+
+    if found:
+        return "\n".join(texts), tasks
+
+    legacy = base / TASKS_FILENAME
+    if legacy.is_file():
+        text = legacy.read_text(encoding="utf-8")
+        tasks = tf.parse(text)
+        for task in tasks:
+            if not task.get("source"):
+                task["source"] = "agent"
+            task["source_file"] = TASKS_FILENAME
+        return text, tasks
+
+    return "", []
 
 
 def read_sessions_detailed(limit: int | None = None) -> tuple[list[dict], list[str]]:

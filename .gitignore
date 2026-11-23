@@ -4,10 +4,18 @@ __pycache__/
 *.tmp
 
 # ── 个人数据：不入库 ──────────────────────────────────────────
-# 这三个是本机真实数据（会话归类、任务内容、开发状态），含个人路径与会话 ID，
+# 这几个是本机真实数据（会话归类、任务内容、开发状态），含个人路径与会话 ID，
 # 不适合随代码分发。仓库里只保留 *.example.* 模板，新机器复制即可：
-#   cp META.example.yaml META.yaml && cp TASKS.example.md TASKS.md
+#   cp META.example.yaml META.yaml
+#   cp TASKS.agent.example.md TASKS.agent.md
+#   cp TASKS.work.example.md TASKS.work.md
+#   cp TASKS.home.example.md TASKS.home.md
 META.yaml
-TASKS.md
 STATE.md
+
+# 任务按来源分三份（agent 自动化 / 办公日常 / 家里的事），全是个人内容。
+TASKS.md
+TASKS.agent.md
+TASKS.work.md
+TASKS.home.md
 
