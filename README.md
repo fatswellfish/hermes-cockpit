@@ -102,9 +102,44 @@ plugins/project-hub/          # Python 后端（挂到 /api/plugins/project-hub/
     manifest.json             # dashboard 发现用
   plugin.yaml                 # CLI 插件体系用
 desktop-plugins/project-hub/
-  plugin.js                   # 单文件桌面插件（5 个注册点）
-scripts/install.sh            # 安装 + 自检
+  src/plugin.js               # 桌面插件源码（5 个注册点）
+  src/i18n.js                 # 双语词表 en/zh（代码层英文，只这里出现中文）
+  build.mjs                   # 把 src/ 内联成单文件 plugin.js（宿主只认单文件）
+  plugin.js                   # ★ 构建产物，安装时拷贝的就是它
+scripts/install.sh            # 构建 + 安装 + 自检
 scripts/check_boundary.py     # 边界校验
+```
+
+---
+
+## 双语（跟着宿主界面语言走）
+
+**显示层中文，代码层全英文。** 中文只出现在 `src/i18n.js` 的值里；`src/plugin.js` 内零中文字面量
+（`__i18n_check.mjs` 强制）。插件跟随宿主的 `display.language`：
+
+```yaml
+# config.yaml
+display:
+  language: zh    # en / zh
+```
+
+三条实现约束，任一条错了都会「插件加载失败，侧栏入口直接消失」：
+
+1. **桌面产物必须是单文件。** 宿主的 runtime loader 只接受 `@hermes/plugin-sdk` 和 `react`，
+   任何相对 import 都报 `unsupported import: ./i18n.js`（`contrib/runtime-loader.ts`）。
+   所以源码分 `src/`，`build.mjs` 内联成 `plugin.js`，安装的是产物。
+
+2. **侧栏 / ⌘K 的 label 要在语言变化时重新注册。** 宿主只在注册那一刻读一次 `label`，
+   切语言不会自动刷新。用 `ctx.i18n.onLocaleChange` 先 dispose 再注册（内置 kanban 插件同理）。
+   `plugin.js` 顶层导出的 `name` 无法本地化——它在语言上下文存在之前就被读取。
+
+3. **`config.yaml` 的 `display.language` 是启动时读的。** 改了它要重启 App 才生效，
+   Ctrl+R 不够；插件侧逻辑正确也看不到变化。
+
+```bash
+node desktop-plugins/project-hub/build.mjs      # 改完源码必须重建
+node desktop-plugins/project-hub/__zh_check.mjs # 中文词表 + 切语言重注册
+node desktop-plugins/project-hub/__e2e_locale_check.mjs  # 对产物跑 en→zh→en
 ```
 
 ---

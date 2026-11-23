@@ -28,6 +28,8 @@ import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
+// Bundles live with the sources; the built plugin.js has them inlined.
+import { MESSAGES } from './src/i18n.js'
 import assert from 'node:assert/strict'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -212,7 +214,16 @@ try {
 
 const def = mod && mod.default
 const called = { register: [], notify: [], navigate: [], openSession: [] }
-const ctx = { register: e => called.register.push(e) }
+// Mirror the host context (contrib/plugin.ts): both register and registerMany
+// exist, and registerMany returns a disposer. A stub missing registerMany makes
+// a correct plugin look broken.
+const ctx = {
+  register: (e) => { called.register.push(e); return () => {} },
+  registerMany: (es) => {
+    es.forEach((e) => called.register.push(e))
+    return () => {}
+  }
+}
 
 if (def) {
   await check('① export default 有 id / name / register', () => {
@@ -258,7 +269,9 @@ if (def) {
     assert.ok(byId['cockpit-nav'].data.label)
     assert.ok(byId['cockpit-nav'].data.codicon, '侧栏入口缺 codicon')
     assert.equal(typeof byId['cockpit-cmd'].data.run, 'function')
-    assert.equal(byId['cockpit-cmd'].data.label, '打开项目中枢')
+    // Copy comes from the locale bundle now, so assert against the bundle —
+    // hard-coding a Chinese string here would pin this test to one language.
+    assert.equal(byId['cockpit-cmd'].data.label, MESSAGES.en['plugin.open'])
     // host.navigate 跑在 loader worker 里，主线程观察不到调用；
     // 这里至少真执行一次确认不抛，再用源码断言它确实指向 /cockpit
     byId['cockpit-cmd'].data.run()
@@ -301,11 +314,14 @@ if (def) {
       else walk(kids)
     }
     walk(card)
-    for (const label of probe.LABELS) {
+    // Assert against the locale bundle: with no translator prop a component
+    // renders the bundled English copy.
+    const wanted = [MESSAGES.en['setup.fresh'], MESSAGES.en['setup.imported']]
+    for (const label of wanted) {
       assert.ok(texts.includes(label), `引导卡片里缺少按钮文案「${label}」，实际有：${texts.join(' | ')}`)
     }
-    assert.ok(texts.some(t => t.includes('还没初始化')), '引导卡片缺少说明文字')
-    return `按钮：${probe.LABELS.join(' / ')}`
+    assert.ok(texts.some(x => x.includes(MESSAGES.en['setup.title'])), '引导卡片缺少标题')
+    return `按钮：${wanted.join(' / ')}`
   })
 
   await check('⑤c 两个按钮真的发 POST /setup/init（mode=fresh / imported）', () => {
@@ -327,8 +343,10 @@ if (def) {
     // 点下去的真后果：发到 setup/init，且两个按钮分别对应 fresh / imported
     assert.ok(/postJSON\(\s*'\/setup\/init'/.test(SRC.replace(/\n\s*/g, ' ')),
               "引导卡片没有调用 postJSON('/setup/init')")
-    assert.ok(/btn\('fresh',\s*'🆕 从零开始'\)/.test(SRC), "缺少 fresh 按钮（文案须固定）")
-    assert.ok(/btn\('imported',\s*'📥 导入已有'\)/.test(SRC), "缺少 imported 按钮（文案须固定）")
+    // Both buttons must route their label through the bundle, so the copy
+    // follows the UI language instead of being pinned here.
+    assert.ok(/btn\('fresh',\s*t\('setup\.fresh'\)\)/.test(SRC), '缺少 fresh 按钮（label 须走词表）')
+    assert.ok(/btn\('imported',\s*t\('setup\.imported'\)\)/.test(SRC), '缺少 imported 按钮（label 须走词表）')
     return 'fresh / imported 各自对应一个按钮'
   })
 }
@@ -357,7 +375,7 @@ if (def) {
     assert.equal(r.code, 409)
     assert.equal(r.reason, 'stale')
     assert.equal(reloaded, 1, '409 时没有自动 reload —— 用户操作会被静默丢掉')
-    assert.ok(SRC.includes("'文件已被改动，正在刷新…'"),
+    assert.ok(SRC.includes("t('common.stale')"),
               '源码里没有找到 409 的刷新提示文案')
     // 409 分支必须发 warning 通知，不能静默
     assert.ok(/code === 409[\s\S]{0,200}host\.notify\(\{\s*kind:\s*'warning'/.test(SRC.replace(/\n\s*/g, ' ')),

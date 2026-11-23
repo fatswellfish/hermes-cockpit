@@ -1,41 +1,288 @@
 /**
- * hermes-cockpit — 项目中枢（C 模块桌面界面）
+ * project-hub — desktop UI for the project hub plugin.
  *
- * 一屏三栏：左「分类 + 项目」· 中「会话」· 右「任务」。
- * 数据一律走 `/api/plugins/hermes-cockpit/*`（后端 dashboard/plugin_api.py），
- * 前端不直连宿主库、不改 cwd、不能合并/拆分会话。
+ * Three columns on one screen: left "categories + projects", middle "sessions",
+ * right "tasks".
+ * All data goes through `/api/plugins/project-hub/*` (backend: dashboard/plugin_api.py).
+ * The frontend never touches host databases directly, never changes cwd, and
+ * cannot merge or split sessions.
  *
- * 无 JSX 语法（宿主不编译本文件），UI 一律 jsx() / jsxs() 调用。
- * 颜色只用主题 CSS 变量，禁硬编码（红色警示沿用现役 todo-panel 的 #d9534f 用法）。
+ * No JSX syntax (the host does not compile this file); UI is built with
+ * jsx() / jsxs() calls only.
+ * Colors come from theme CSS variables only; no hardcoded values (the red
+ * warning reuses the #d9534f already used by the shipped todo-panel).
+ *
+ * All user-visible copy lives in `./i18n.js` and is resolved against the host's
+ * active locale, so this file must never contain a display string literal.
  */
 
 import { host, Tip, cn, SIDEBAR_NAV_AREA, PALETTE_AREA, ROUTES_AREA } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+/**
+ * ⚠️ GENERATED FILE — do not edit.
+ *
+ * Sources: desktop-plugins/project-hub/src/{plugin.js,i18n.js}
+ * Built by: desktop-plugins/project-hub/build.mjs
+ *
+ * The host's runtime loader only accepts @hermes/plugin-sdk and react imports,
+ * so the desktop side must be one file and the locale bundles are inlined
+ * below. Edit the sources, then run: node build.mjs
+ */
+
+// ── inlined from ./i18n.js ────────────────────────────────────────────
+/**
+ * Locale bundles for the project-hub plugin.
+ *
+ * Why this file exists
+ * --------------------
+ * Every user-visible string in this plugin used to be a Chinese literal inlined
+ * at its render site. That is unmaintainable and it strands the UI in one
+ * language no matter what the host app is set to. All display copy now lives
+ * here, keyed, and `plugin.js` only ever references keys.
+ *
+ * Rules for this file:
+ *   - keys are English identifiers; values are the display copy in that locale
+ *   - no keys with behaviour baked in: e.g. `col.projects` carries a `{n}`
+ *     placeholder instead of a pre-formatted "14 项目" string
+ *   - code identifiers, comments and file names stay English everywhere else
+ *
+ * Resolution: the host's active locale picks the bundle (`zh` → `zh`,
+ * anything else → `en`), so the plugin follows the app's UI language instead
+ * of being pinned to one. `en` is the fallback so an unknown locale still
+ * renders something readable rather than key names.
+ */
+
+const DEFAULT_LOCALE = 'en'
+
+const MESSAGES = {
+  en: {
+    // status
+    'status.doing': 'In progress',
+    'status.todo': 'To do',
+    'status.done': 'Done',
+    'status.blocked': 'Blocked',
+
+    // categories
+    'category.software': 'Software',
+    'category.media': 'Media',
+    'category.infra': 'Infrastructure',
+    'category.agent': 'Agents',
+    'category.knowledge': 'Knowledge',
+    'category.other': 'Other',
+
+    // overview bar
+    'stat.projects': '{n} projects',
+    'stat.sessions': '{n} sessions',
+    'stat.tasks': '{n} tasks',
+    'stat.boards': '{n} boards',
+    'stat.unassigned': '{n} unassigned',
+
+    // left column
+    'col.projects': '{n} projects',
+    'col.sessions': '{n} sessions',
+    'col.unassigned': 'Unassigned',
+    'col.orphanTasks': '{n} tasks (slug not in project table)',
+    'col.fileFlags.doing': '{n} in progress',
+    'col.fileFlags.blocked': '{n} blocked',
+    'col.item.sessions': '{n} sessions',
+    'col.item.tasks': '{n} tasks',
+    'col.item.cards': '{n} cards',
+
+    // middle column
+    'mid.sessions': 'Sessions',
+    'mid.allSessions': 'All sessions',
+    'mid.unassignedSessions': 'Unassigned sessions',
+    'mid.projectTitle': 'Project: {slug}',
+    'mid.newSession': '+ New session',
+    'mid.newSessionHint': 'Create a session in this project directory (cwd_explicit, verified after create)',
+    'mid.empty': 'No sessions yet',
+    'mid.noCwd': '(no cwd)',
+    'mid.manual': '· manual',
+    'mid.pickProject': 'Pick a project…',
+    'mid.classify': 'Classify',
+    'mid.classifyHint': 'Attach this session to a project (writes META.yaml only, never touches cwd)',
+    'mid.more': '{rest} more, click to show {step} more',
+    'mid.classifiedTo': 'Classified to {slug}',
+    'mid.openFailed': 'Failed to open session: {error}',
+    'mid.untitled': '(untitled session)',
+
+    // right column / tasks
+    'right.tasks': 'Tasks',
+    'right.orphanTasks': 'Unassigned tasks',
+    'right.orphanHint': 'proj not in project table',
+    'right.slugMismatch': 'slug does not match project',
+    'right.empty': 'No tasks here',
+    'right.compatWarning': 'Compatibility notice',
+    'right.snapshot': 'Snapshot:',
+    'right.toggleHint': 'Click to check / uncheck',
+    'right.readonlyHint': 'Read-only — writes disabled',
+    'right.missingStamp': 'Missing file stamp: /overview returned no stamp, refusing to write',
+
+    // setup / onboarding
+    'setup.title': 'Project Hub is not initialized yet',
+    'setup.body':
+      'Current state: {status}. Pick one way to start (this cannot be switched back afterwards).',
+    'setup.fresh': '🆕 Start fresh',
+    'setup.imported': '📥 Import existing',
+    'setup.changed': 'Onboarding state changed, refreshing…',
+
+    // misc
+    'common.loading': 'Loading…',
+    'common.readFailed': 'Load failed (HTTP {status})',
+    'common.networkError': 'Network error: {error}',
+    'common.stale': 'File changed on disk, refreshing…',
+    'common.loadFailed': 'Could not load project hub data',
+    'common.readonlyBadge': '· read-only (onboarding incomplete)',
+    'common.readonlyTip': 'Read-only (onboarding incomplete) — writes disabled',
+
+    // plugin identity (sidebar / palette / status chip)
+    'plugin.name': 'Project Hub',
+    'plugin.open': 'Open Project Hub'
+  },
+
+  zh: {
+    'status.doing': '进行中',
+    'status.todo': '待开始',
+    'status.done': '已完成',
+    'status.blocked': '阻塞',
+
+    'category.software': '软件开发',
+    'category.media': '媒体制作',
+    'category.infra': '基础架构',
+    'category.agent': '智能体',
+    'category.knowledge': '智库',
+    'category.other': '其他',
+
+    'stat.projects': '{n} 项目',
+    'stat.sessions': '{n} 会话',
+    'stat.tasks': '{n} 任务',
+    'stat.boards': '{n} 看板',
+    'stat.unassigned': '{n} 未归属',
+
+    'col.projects': '项目 {n}',
+    'col.sessions': '{n} 会话',
+    'col.unassigned': '未归属',
+    'col.orphanTasks': '{n} 任务（slug 不在项目表里）',
+    'col.fileFlags.doing': '{n} 进行',
+    'col.fileFlags.blocked': '{n} 阻塞',
+    'col.item.sessions': '{n} 会话',
+    'col.item.tasks': '· {n} 任务',
+    'col.item.cards': '· {n} 卡',
+
+    'mid.sessions': '会话',
+    'mid.allSessions': '全部会话',
+    'mid.unassignedSessions': '未归属会话',
+    'mid.projectTitle': '项目：{slug}',
+    'mid.newSession': '＋ 新建会话',
+    'mid.newSessionHint': '在该项目目录下新建会话（cwd_explicit，建完回查）',
+    'mid.empty': '这里还没有会话',
+    'mid.noCwd': '（无 cwd）',
+    'mid.manual': '· 人工',
+    'mid.pickProject': '选择项目…',
+    'mid.classify': '归类',
+    'mid.classifyHint': '把该会话归到某个项目（只写 META.yaml，不改 cwd）',
+    'mid.more': '还有 {rest} 条，点击多显示 {step} 条',
+    'mid.classifiedTo': '已归类到 {slug}',
+    'mid.openFailed': '打开会话失败：{error}',
+    'mid.untitled': '（无标题会话）',
+
+    'right.tasks': '任务',
+    'right.orphanTasks': '未归属任务',
+    'right.orphanHint': 'proj 不在项目表',
+    'right.slugMismatch': 'slug 不匹配项目',
+    'right.empty': '这里没有任务',
+    'right.compatWarning': '兼容性提示',
+    'right.snapshot': '快照：',
+    'right.toggleHint': '点击勾选/取消',
+    'right.readonlyHint': '只读模式 — 写操作已禁用',
+    'right.missingStamp': '缺少文件戳：/overview 没下发 stamp，无法安全写入',
+
+    'setup.title': '项目中枢还没初始化',
+    'setup.body': '当前引导状态：{status}。选择一种方式开始（选定后不可反向切换）。',
+    'setup.fresh': '🆕 从零开始',
+    'setup.imported': '📥 导入已有',
+    'setup.changed': '引导状态已被改动，正在刷新…',
+
+    'common.loading': '加载中…',
+    'common.readFailed': '读取失败（HTTP {status}）',
+    'common.networkError': '网络错误：{error}',
+    'common.stale': '文件已被改动，正在刷新…',
+    'common.loadFailed': '读不到项目中枢数据',
+    'common.readonlyBadge': '· 只读（引导未完成）',
+    'common.readonlyTip': '只读模式（引导未完成）— 写操作已禁用',
+
+    'plugin.name': '项目中枢',
+    'plugin.open': '打开项目中枢'
+  }
+}
+
+/**
+ * Normalize a host locale tag to a bundle key.
+ *
+ * The host's option ids are `en`, `zh`, `zh-hant`, `ja`, … (i18n/languages.ts
+ * LOCALE_OPTIONS), and the config stores that same id in `display.language`.
+ * Traditional Chinese is a distinct UI language, so it must not silently fall
+ * back to the Simplified copy — until it has its own bundle it resolves to
+ * English, which is honest, rather than showing 简体 to a 繁體 user.
+ */
+function normalizeLocale(tag) {
+  const raw = String(tag || '').toLowerCase().replace('_', '-')
+  if (raw === 'zh' || raw === 'zh-cn' || raw === 'zh-sg') return 'zh'
+  return DEFAULT_LOCALE
+}
+
+/**
+ * Build a translator for `locale`.
+ *
+ * Missing key falls back to English, then to the key itself — a missing string
+ * must never render as `undefined` in the UI.
+ */
+function makeT(locale) {
+  const primary = MESSAGES[normalizeLocale(locale)] || MESSAGES[DEFAULT_LOCALE]
+  const fallback = MESSAGES[DEFAULT_LOCALE]
+  return function t(key, vars) {
+    let out = primary[key]
+    if (out === undefined) out = fallback[key]
+    if (out === undefined) return key
+    if (!vars) return out
+    return String(out).replace(/\{(\w+)\}/g, (whole, name) =>
+      Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole
+    )
+  }
+}
+
+/** Locale-tag based translation, for code that never enters React. */
+const translateNow = (tag, key, vars) => makeT(tag)(key, vars)
+// ── end ./i18n.js ─────────────────────────────────────────────────────
 
 const ID = 'project-hub'
 const API = `/api/plugins/${ID}`
 
 /**
- * 桌面插件的取数通道。
+ * Data channel for this desktop plugin.
  *
- * ⛔ 绝不能用裸 fetch 打相对路径（例如引号里直接写 /api/plugins/...）：
- * 打包版桌面 App 的页面是 `file:///.../app.asar.unpacked/dist/index.html` 协议
- * （没有 dev server），相对路径会被当成**本地文件**去找，得到
- * `net::ERR_FILE_NOT_FOUND`，界面显示「读不到清单 / Failed to fetch」，
- * 而后端其实完全正常（DevTools ▸ Network 里一眼可见）。
+ * NEVER use a bare fetch against a relative path (e.g. the literal
+ * /api/plugins/... inside quotes): the packaged desktop app serves its page
+ * from the `file:///.../app.asar.unpacked/dist/index.html` protocol (there is
+ * no dev server), so a relative path is resolved as a LOCAL FILE and fails
+ * with `net::ERR_FILE_NOT_FOUND` while the backend is perfectly healthy
+ * (visible in DevTools ▸ Network).
  *
- * 真实通道是 preload 暴露的 `window.hermesDesktop.api({ path, method?, body?, priority? })`
- * （Electron IPC，与页面协议无关；App 内核自己也用它 —— src/api/client.ts 的 hermesApi）。
+ * The real channel is `window.hermesDesktop.api({ path, method?, body?, priority? })`,
+ * exposed by preload (Electron IPC, independent of the page protocol; the app
+ * core uses it too — src/api/client.ts hermesApi).
  *
- * 本函数把 IPC 结果**包装成 fetch Response 的形状**（ok / status / json()），
- * 这样上层的错误分支（409 stale / 403 越界 / 428 缺戳）一个字都不用改。
+ * This wrapper reshapes the IPC result into a fetch Response
+ * (ok / status / json()) so every error branch above it
+ * (409 stale / 403 out-of-scope / 428 missing stamp) stays untouched.
  */
 async function apiFetch(path, { method = 'GET', body } = {}) {
   const bridge = globalThis.window && globalThis.window.hermesDesktop
 
   if (!bridge || typeof bridge.api !== 'function') {
-    // 浏览器标签页形态（没有 Electron preload）：退回 fetch。此时页面是 http/https，相对路径可用。
+    // Browser-tab form (no Electron preload): fall back to fetch. The page is
+    // served over http/https there, so a relative path resolves correctly.
     const r = await fetch(path, {
       body: body === undefined ? undefined : JSON.stringify(body),
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
@@ -44,7 +291,8 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
     return { json: () => r.json(), ok: r.ok, status: r.status }
   }
 
-  // IPC 通道：非 2xx 会 reject，错误里带 status 与响应体，这里统一翻译回 Response 形状。
+  // IPC channel: non-2xx rejects, carrying status and body; reshape it back
+  // into a Response-shaped object here.
   try {
     const data = await bridge.api({ body, method, path, priority: 'foreground' })
     return { json: async () => data, ok: true, status: 200 }
@@ -62,18 +310,73 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
 const POLL_MS = 4000
 const WARN = '#d9534f'
 
-const STATUS_STYLE = {
-  doing: { dot: 'var(--ui-accent)', label: '进行中' },
-  todo: { dot: 'var(--ui-text-quaternary)', label: '待开始' },
-  done: { dot: 'var(--ui-text-secondary)', label: '已完成' },
-  blocked: { dot: WARN, label: '阻塞' }
+/**
+ * Translator handed down to components.
+ *
+ * `ctx.i18n.t` (see contrib/plugin.ts → createPluginI18n) reads the host's
+ * active locale on every call, so a locale switch re-renders in the new
+ * language without the plugin tracking anything itself. Before register()
+ * runs — or under a test stub with no ctx.i18n — this falls back to English
+ * so a component never renders `undefined` for copy.
+ */
+const FALLBACK_LOCALE = 'en'
+
+function makeTranslator(i18n) {
+  const fromBundle = (key, vars) => {
+    const msg = MESSAGES[FALLBACK_LOCALE][key]
+    if (msg === undefined) return key
+    return vars
+      ? String(msg).replace(/\{(\w+)\}/g, (whole, name) =>
+          Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole
+        )
+      : msg
+  }
+  return function t(key, vars) {
+    if (i18n && typeof i18n.t === 'function') {
+      try {
+        const out = i18n.t(key, vars)
+        // A registered-but-incomplete bundle returns the raw key back; prefer
+        // the bundled English over showing `mid.empty` in the UI.
+        if (typeof out === 'string' && out !== key) return out
+      } catch {
+        // fall through to the bundled copy
+      }
+    }
+    return fromBundle(key, vars)
+  }
 }
 
-const SESSION_PAGE = 60          // 中栏单次渲染上限，1479 条一次画完会卡死界面
+/**
+ * Literal values TASKS.md uses to mean "no blocker".
+ *
+ * This is DATA, not display copy: it is what the Markdown author writes in the
+ * blocker column, so it must not be routed through `t`. Kept in one place so a
+ * project following a different convention only has to change one line.
+ */
+const BLOCKER_EMPTY = new Set(['', '无', '无。'])
 
-// ── 取数 ────────────────────────────────────────────────────────────────────
+/**
+ * English-only translator shared by every component.
+ *
+ * Components take `t` as a prop so they stay pure, but a missing prop must not
+ * crash the tree — the host renders panes during hydration and a self-test may
+ * call a component directly. Fall back to the bundled English copy.
+ */
+const DEFAULT_T = makeTranslator(null)
 
-function useOverview(intervalMs) {
+/** Locale-agnostic status → dot colour. Labels are resolved through `t`. */
+const STATUS_DOT = {
+  doing: 'var(--ui-accent)',
+  todo: 'var(--ui-text-quaternary)',
+  done: 'var(--ui-text-secondary)',
+  blocked: WARN
+}
+
+const SESSION_PAGE = 60          // Cap on middle-column renders; painting all 1479 at once freezes the UI
+
+// ── data fetching ───────────────────────────────────────────────────────────
+
+function useOverview(intervalMs, t = DEFAULT_T) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
 
@@ -81,9 +384,9 @@ function useOverview(intervalMs) {
     try {
       const r = await apiFetch(`${API}/overview`)
       const j = await r.json()
-      // 后端两种错误形态：REST 的 {detail} 与 handle() 的 {ok:false, error}
+      // Two backend error shapes: REST {detail} and handle() {ok:false, error}
       if (!r.ok || (j && j.ok === false)) {
-        setErr((j && (j.detail || j.error)) || `读取失败（HTTP ${r.status}）`)
+        setErr((j && (j.detail || j.error)) || t('common.readFailed', { status: r.status }))
       } else {
         setErr(null)
       }
@@ -91,29 +394,30 @@ function useOverview(intervalMs) {
     } catch (e) {
       setErr(String((e && e.message) || e))
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     let dead = false
     const tick = () => { if (!dead) load() }
     tick()
-    const t = setInterval(tick, intervalMs || POLL_MS)
-    return () => { dead = true; clearInterval(t) }
+    const timer = setInterval(tick, intervalMs || POLL_MS)
+    return () => { dead = true; clearInterval(timer) }
   }, [load, intervalMs])
 
   return { data, err, reload: load }
 }
 
 /**
- * 写操作统一入口（任务 2 · C4）。
+ * Single entry point for every write (task 2 · C4).
  *
- * 三条硬语义，一条都不能丢：
- *   · 409 stale   → 提示「文件已被改动，正在刷新」并自动 reload，**不静默丢用户操作**
- *   · 403 越界    → 把后端给的原因原样显示（fresh 下对存量会话归类）
- *   · 428 缺戳    → 说明是插件缺陷，不当成用户错误
- * 成功返回 {ok:true, data}，失败返回 {ok:false, code, reason, message}。
+ * Three hard semantics, none may be dropped:
+ *   · 409 stale   → tell the user the file changed and auto-reload; never
+ *                   silently discard their action
+ *   · 403 out-of-scope → surface the backend's own reason verbatim
+ *   · 428 no stamp     → a plugin defect, not a user error
+ * Returns {ok:true, data} on success, {ok:false, code, reason, message} otherwise.
  */
-async function postJSON(path, body, onStale) {
+async function postJSON(path, body, onStale, t = DEFAULT_T) {
   let r, j
   try {
     r = await apiFetch(`${API}${path}`, {
@@ -121,7 +425,7 @@ async function postJSON(path, body, onStale) {
       body: body || {}
     })
   } catch (e) {
-    return { ok: false, code: 0, message: `网络错误：${(e && e.message) || e}` }
+    return { ok: false, code: 0, message: t('common.networkError', { error: (e && e.message) || e }) }
   }
   try {
     j = await r.json()
@@ -134,8 +438,8 @@ async function postJSON(path, body, onStale) {
 
   if (code === 409 && reason === 'stale') {
     if (onStale) onStale()
-    host.notify({ kind: 'warning', message: '文件已被改动，正在刷新…' })
-    return { ok: false, code, reason, message: '文件已被改动，正在刷新…' }
+    host.notify({ kind: 'warning', message: t('common.stale') })
+    return { ok: false, code, reason, message: t('common.stale') }
   }
   if (!r.ok || (j && j.ok === false)) {
     host.notify({ kind: 'error', message })
@@ -144,10 +448,10 @@ async function postJSON(path, body, onStale) {
   return { ok: true, code, reason, data: j }
 }
 
-// ── 小部件 ──────────────────────────────────────────────────────────────────
+// ── small widgets ───────────────────────────────────────────────────────────
 
 function Bar({ pct, status }) {
-  const color = (STATUS_STYLE[status] || STATUS_STYLE.todo).dot
+  const color = STATUS_DOT[status] || STATUS_DOT.todo
   const w = Math.max(0, Math.min(100, pct || 0))
   return jsx('div', {
     className: 'h-1 w-full overflow-hidden rounded-full',
@@ -167,8 +471,8 @@ function Empty({ children }) {
   })
 }
 
-/** 统一写按钮：readonly 时 disabled 并给 tooltip（任务 3 · C5）。 */
-function ActBtn({ label, title, onClick, disabled, readonly, tone }) {
+/** One write-button shape: disabled with a tooltip while readonly (task 3 · C5). */
+function ActBtn({ label, title, onClick, disabled, readonly, tone, t = DEFAULT_T }) {
   const off = disabled || readonly
   const btn = jsx('button', {
     type: 'button',
@@ -185,30 +489,34 @@ function ActBtn({ label, title, onClick, disabled, readonly, tone }) {
     style: tone === 'warn' ? { color: WARN } : undefined,
     children: label
   })
-  const tip = readonly ? '只读模式（引导未完成）— 写操作已禁用' : (title || label)
+  const tip = readonly ? t('common.readonlyTip') : (title || label)
   return jsx(Tip, { label: tip, children: btn })
 }
 
-// ── 左栏：分类 + 项目 ───────────────────────────────────────────────────────
+// ── left column: categories + projects ─────────────────────────────────────
 
-function projectCategory(name) {
+/**
+ * Emoji prefix in the project name -> category message key.
+ * Returns a key (not a label) so the caller renders it through `t`.
+ */
+function projectCategoryKey(name) {
   const s = String(name || '')
-  if (s.indexOf('🖥') === 0) return '软件开发'
-  if (s.indexOf('🎬') === 0) return '媒体制作'
-  if (s.indexOf('🏗') === 0) return '基础架构'
-  if (s.indexOf('🤖') === 0) return '智能体'
-  if (s.indexOf('👤') === 0 || s.indexOf('🧠') === 0) return '智库'
-  return '其他'
+  if (s.indexOf('🖥') === 0) return 'category.software'
+  if (s.indexOf('🎬') === 0) return 'category.media'
+  if (s.indexOf('🏗') === 0) return 'category.infra'
+  if (s.indexOf('🤖') === 0) return 'category.agent'
+  if (s.indexOf('👤') === 0 || s.indexOf('🧠') === 0) return 'category.knowledge'
+  return 'category.other'
 }
 
-function LeftCol({ data, selected, onSelect, stats }) {
+function LeftCol({ data, selected, onSelect, stats, t = DEFAULT_T }) {
   const projects = (data && data.projects) || []
   const unassignedN = stats.unassigned_sessions || 0
 
   const groups = useMemo(() => {
     const m = new Map()
     for (const p of projects) {
-      const c = projectCategory(p.name)
+      const c = projectCategoryKey(p.name)
       if (!m.has(c)) m.set(c, [])
       m.get(c).push(p)
     }
@@ -224,7 +532,7 @@ function LeftCol({ data, selected, onSelect, stats }) {
       jsx('div', {
         className: 'px-3 py-2 text-[0.6875rem] font-medium',
         style: { color: 'var(--ui-text-secondary)' },
-        children: `项目 ${stats.projects || 0} · 会话 ${stats.sessions || 0}`
+        children: `${t('col.projects', { n: stats.projects || 0 })} · ${t('col.sessions', { n: stats.sessions || 0 })}`
       }),
 
       jsx('div', {
@@ -235,14 +543,14 @@ function LeftCol({ data, selected, onSelect, stats }) {
             jsx('div', {
               className: 'px-3 pb-1 pt-2 text-[0.625rem]',
               style: { color: 'var(--ui-text-quaternary)' },
-              children: `${cat} · ${list.length}`
+              children: `${t(cat)} · ${list.length}`
             }),
             jsx('div', {
               children: list.map(p => {
                 const on = isSel('project', p.slug)
                 const flags = []
-                if (p.task_doing) flags.push(`${p.task_doing} 进行`)
-                if (p.task_blocked) flags.push(`${p.task_blocked} 阻塞`)
+                if (p.task_doing) flags.push(t('col.fileFlags.doing', { n: p.task_doing }))
+                if (p.task_blocked) flags.push(t('col.fileFlags.blocked', { n: p.task_blocked }))
                 return jsxs('div', {
                   className: cn('cursor-pointer px-3 py-1.5 text-[0.75rem]',
                     'hover:bg-(--chrome-action-hover)', on && 'bg-(--chrome-action-hover)'),
@@ -269,9 +577,9 @@ function LeftCol({ data, selected, onSelect, stats }) {
                       className: 'mt-0.5 flex items-center gap-1 text-[0.625rem]',
                       style: { color: 'var(--ui-text-quaternary)' },
                       children: [
-                        jsx('span', { children: `${p.session_count} 会话` }),
-                        jsx('span', { children: `· ${p.task_count} 任务` }),
-                        p.board_cards ? jsx('span', { children: `· ${p.board_cards} 卡` }) : null,
+                        jsx('span', { children: t('col.item.sessions', { n: p.session_count }) }),
+                        jsx('span', { children: t('col.item.tasks', { n: p.task_count }) }),
+                        p.board_cards ? jsx('span', { children: t('col.item.cards', { n: p.board_cards }) }) : null,
                         flags.length
                           ? jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: flags.join(' ') })
                           : null
@@ -296,11 +604,11 @@ function LeftCol({ data, selected, onSelect, stats }) {
             children: jsxs('div', {
               className: 'flex items-center gap-1.5',
               children: [
-                jsx('span', { className: 'flex-1', style: { color: 'var(--ui-text-primary)' }, children: '未归属' }),
+                jsx('span', { className: 'flex-1', style: { color: 'var(--ui-text-primary)' }, children: t('col.unassigned') }),
                 jsx('span', {
                   className: 'text-[0.625rem]',
                   style: { color: 'var(--ui-text-quaternary)' },
-                  children: `${unassignedN} 会话`
+                  children: t('col.sessions', { n: unassignedN })
                 })
               ]
             })
@@ -308,7 +616,7 @@ function LeftCol({ data, selected, onSelect, stats }) {
           jsx('div', {
             className: 'px-3 pb-1 text-[0.625rem]',
             style: { color: 'var(--ui-text-quaternary)' },
-            children: `${stats.orphan_tasks || 0} 任务（slug 不在项目表里）`
+            children: t('col.orphanTasks', { n: stats.orphan_tasks || 0 })
           })
         ]
       })
@@ -316,15 +624,15 @@ function LeftCol({ data, selected, onSelect, stats }) {
   })
 }
 
-// ── 中栏：会话 ──────────────────────────────────────────────────────────────
+// ── middle column: sessions ────────────────────────────────────────────────
 
-function sessionLabel(s) {
+function sessionLabel(s, t) {
   if (s.title) return s.title
   if (s.cwd) {
     const parts = String(s.cwd).split(/[\\/]/).filter(Boolean)
     return parts.length ? parts[parts.length - 1] : s.cwd
   }
-  return s.id ? String(s.id).slice(0, 16) : '（无标题会话）'
+  return s.id ? String(s.id).slice(0, 16) : t('mid.untitled')
 }
 
 function fmtTime(epoch) {
@@ -334,40 +642,40 @@ function fmtTime(epoch) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function MidCol({ data, selected, readonly, reload, projects }) {
+function MidCol({ data, selected, readonly, reload, projects, t = DEFAULT_T }) {
   const [limit, setLimit] = useState(SESSION_PAGE)
-  const [picking, setPicking] = useState(null)      // 正在归类的 session id
+  const [picking, setPicking] = useState(null)      // session id currently being classified
 
   useEffect(() => { setLimit(SESSION_PAGE) }, [selected && (selected.slug || selected.kind)])
 
   const view = useMemo(() => {
-    if (!data) return { list: [], total: 0, title: '会话' }
+    if (!data) return { list: [], total: 0, title: t('mid.sessions') }
     if (!selected) {
       const all = (data.assigned_sessions || []).concat(data.unassigned_sessions || [])
-      return { list: all, total: all.length, title: '全部会话' }
+      return { list: all, total: all.length, title: t('mid.allSessions') }
     }
     if (selected.kind === 'unassigned') {
       const l = data.unassigned_sessions || []
-      return { list: l, total: l.length, title: '未归属会话' }
+      return { list: l, total: l.length, title: t('mid.unassignedSessions') }
     }
     const l = (data.assigned_sessions || []).filter(s => s.project === selected.slug)
-    return { list: l, total: l.length, title: '会话' }
-  }, [data, selected])
+    return { list: l, total: l.length, title: t('mid.sessions') }
+  }, [data, selected, t])
 
   const openSession = useCallback(sid => {
     try {
       host.openSession(sid, { intent: 'in-place' })
     } catch (e) {
-      host.notify({ kind: 'error', message: `打开会话失败：${e}` })
+      host.notify({ kind: 'error', message: t('mid.openFailed', { error: e }) })
     }
-  }, [])
+  }, [t])
 
   const assign = useCallback(async (sid, slug) => {
     setPicking(null)
     if (!slug) return
-    const r = await postJSON('/sessions/assign', { session_id: sid, project: slug, source: 'manual' }, reload)
+    const r = await postJSON('/sessions/assign', { session_id: sid, project: slug, source: 'manual' }, reload, t)
     if (r.ok) {
-      host.notify({ kind: 'info', message: `已归类到 ${slug}` })
+      host.notify({ kind: 'info', message: t('mid.classifiedTo', { slug }) })
       reload()
     }
   }, [reload])
@@ -375,14 +683,14 @@ function MidCol({ data, selected, readonly, reload, projects }) {
   const createSession = useCallback(async () => {
     const res = await postJSON('/sessions/new', {
       cwd: selected && selected.path,
-      title: selected ? `项目：${selected.slug}` : null
-    }, reload)
+      title: selected ? t('mid.projectTitle', { slug: selected.slug }) : null
+    }, reload, t)
     if (res.ok) {
       reload()
       const sid = res.data && res.data.session_id
       if (sid) openSession(sid)
     }
-  }, [selected, reload, openSession])
+  }, [selected, reload, openSession, t])
 
   const shown = view.list.slice(0, limit)
 
@@ -401,10 +709,11 @@ function MidCol({ data, selected, readonly, reload, projects }) {
           }),
           selected && selected.kind === 'project'
             ? jsx(ActBtn, {
-                label: '＋ 新建会话',
-                title: '在该项目目录下新建会话（cwd_explicit，建完回查）',
+                label: t('mid.newSession'),
+                title: t('mid.newSessionHint'),
                 readonly,
-                onClick: createSession
+                onClick: createSession,
+                t
               })
             : null
         ]
@@ -413,7 +722,7 @@ function MidCol({ data, selected, readonly, reload, projects }) {
       jsx('div', {
         className: 'min-h-0 flex-1 overflow-y-auto py-1',
         children: shown.length === 0
-          ? jsx(Empty, { children: '这里还没有会话' })
+          ? jsx(Empty, { children: t('mid.empty') })
           : jsx('div', {
               children: shown.map(s => jsxs('div', {
                 className: 'flex items-start gap-2 px-3 py-1.5 hover:bg-(--chrome-action-hover)',
@@ -425,7 +734,7 @@ function MidCol({ data, selected, readonly, reload, projects }) {
                       jsx('div', {
                         className: 'truncate text-[0.75rem]',
                         style: { color: 'var(--ui-text-primary)' },
-                        children: sessionLabel(s)
+                        children: sessionLabel(s, t)
                       }),
                       jsxs('div', {
                         className: 'mt-0.5 flex items-center gap-1 text-[0.625rem]',
@@ -433,10 +742,10 @@ function MidCol({ data, selected, readonly, reload, projects }) {
                         children: [
                           s.cwd
                             ? jsx('span', { className: 'truncate', title: s.cwd, children: s.cwd })
-                            : jsx('span', { children: '（无 cwd）' }),
+                            : jsx('span', { children: t('mid.noCwd') }),
                           jsx('span', { children: `· ${fmtTime(s.last_activity)}` }),
                           s.via === 'manual'
-                            ? jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: '· 人工' })
+                            ? jsx('span', { style: { color: 'var(--ui-text-tertiary)' }, children: t('mid.manual') })
                             : null
                         ]
                       })
@@ -456,13 +765,13 @@ function MidCol({ data, selected, readonly, reload, projects }) {
                               autoFocus: true,
                               onChange: ev => assign(s.id, ev.target.value),
                               children: [
-                                jsx('option', { value: '', children: '选择项目…' }),
+                                jsx('option', { value: '', children: t('mid.pickProject') }),
                                 projects.map(p => jsx('option', { value: p.slug, children: p.name }, p.slug))
                               ]
                             })
                           : jsx(ActBtn, {
-                              label: '归类',
-                              title: '把该会话归到某个项目（只写 META.yaml，不改 cwd）',
+                              label: t('mid.classify'),
+                              title: t('mid.classifyHint'),
                               readonly,
                               onClick: () => setPicking(s.id)
                             })
@@ -481,7 +790,7 @@ function MidCol({ data, selected, readonly, reload, projects }) {
               type: 'button',
               className: 'text-[0.6875rem] text-(--ui-text-quaternary) hover:text-foreground',
               onClick: () => setLimit(v => v + SESSION_PAGE * 4),
-              children: `还有 ${view.total - limit} 条，点击多显示 ${SESSION_PAGE * 4} 条`
+              children: t('mid.more', { rest: view.total - limit, step: SESSION_PAGE * 4 })
             })
           })
         : null
@@ -489,13 +798,13 @@ function MidCol({ data, selected, readonly, reload, projects }) {
   })
 }
 
-// ── 右栏：任务树 ────────────────────────────────────────────────────────────
+// ── right column: task tree ────────────────────────────────────────────────
 
-function Subtask({ task, s, readonly, onToggle }) {
+function Subtask({ task, s, readonly, onToggle, t = DEFAULT_T }) {
   return jsxs('div', {
     className: cn('flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-[0.75rem]',
       'hover:bg-(--chrome-action-hover)', readonly && 'cursor-not-allowed'),
-    title: readonly ? '只读模式 — 写操作已禁用' : '点击勾选/取消',
+    title: readonly ? t('right.readonlyHint') : t('right.toggleHint'),
     onClick: ev => {
       ev.stopPropagation()
       if (!readonly) onToggle(task, s)
@@ -515,10 +824,11 @@ function Subtask({ task, s, readonly, onToggle }) {
   })
 }
 
-function TaskCard({ t, readonly, onToggle }) {
-  const [open, setOpen] = useState(t.status !== 'done')
-  const st = STATUS_STYLE[t.status] || STATUS_STYLE.todo
-  const isBlocked = t.blocker && t.blocker !== '无' && t.blocker !== '无。'
+function TaskCard({ task, readonly, onToggle, t = DEFAULT_T, tr = DEFAULT_T }) {
+  const [open, setOpen] = useState(task.status !== 'done')
+  const st = STATUS_DOT[task.status] || STATUS_DOT.todo
+  const blockerText = String(task.blocker || '').trim()
+  const isBlocked = !BLOCKER_EMPTY.has(blockerText)
 
   return jsxs('div', {
     className: 'rounded-lg border p-2',
@@ -538,15 +848,15 @@ function TaskCard({ t, readonly, onToggle }) {
               jsx('div', {
                 className: 'text-[0.8125rem] font-medium leading-snug',
                 style: { color: 'var(--ui-text-primary)' },
-                children: `${t.id} ${t.title}`
+                children: `${task.id} ${task.title}`
               }),
               jsxs('div', {
                 className: 'mt-0.5 flex items-center gap-1 text-[0.625rem]',
                 style: { color: 'var(--ui-text-quaternary)' },
                 children: [
-                  jsx('span', { children: st.label }),
-                  jsx('span', { children: `· ${t.progress || 0}%` }),
-                  t.project ? jsx('span', { children: `· ${t.project}` }) : null
+                  jsx('span', { children: tr(`status.${task.status || 'todo'}`) }),
+                  jsx('span', { children: `· ${task.progress || 0}%` }),
+                  task.project ? jsx('span', { children: `· ${task.project}` }) : null
                 ]
               })
             ]
@@ -554,65 +864,69 @@ function TaskCard({ t, readonly, onToggle }) {
         ]
       }),
 
-      jsx('div', { className: 'mt-1.5', children: jsx(Bar, { pct: t.progress, status: t.status }) }),
+      jsx('div', { className: 'mt-1.5', children: jsx(Bar, { pct: task.progress, status: task.status }) }),
 
       isBlocked
         ? jsxs('div', {
             className: 'mt-1.5 rounded px-2 py-1 text-[0.625rem]',
             style: { backgroundColor: 'rgba(217,83,79,0.12)', color: 'var(--ui-text-secondary)' },
-            children: ['⛔ ', t.blocker]
+            children: ['⛔ ', blockerText]
           })
         : null,
 
-      open && t.subtasks && t.subtasks.length
+      open && task.subtasks && task.subtasks.length
         ? jsx('div', {
             className: 'mt-1 flex flex-col',
-            children: t.subtasks.map(s => jsx(Subtask, { task: t, s, readonly, onToggle }, s.id))
+            children: task.subtasks.map(s => jsx(Subtask, { task, s, readonly, onToggle, t }, s.id))
           })
         : null,
 
-      open && t.snapshot
+      open && task.snapshot
         ? jsxs('div', {
             className: 'mt-1.5 rounded px-2 py-1 text-[0.625rem] leading-relaxed',
             style: { backgroundColor: 'var(--ui-stroke-secondary)', color: 'var(--ui-text-tertiary)' },
-            children: ['快照：', t.snapshot]
+            children: [t('right.snapshot'), task.snapshot]
           })
         : null
     ]
   })
 }
 
-function RightCol({ data, selected, readonly, reload, warnings }) {
+function RightCol({ data, selected, readonly, reload, warnings, t = DEFAULT_T }) {
   const view = useMemo(() => {
-    if (!data) return { tasks: [], orphans: [], title: '任务', orphan: false }
+    if (!data) return { tasks: [], orphans: [], title: t('right.tasks'), orphan: false }
     if (selected && selected.kind === 'project') {
-      // 项目任务：后端把 slug 不在项目表里的任务单列在 orphan_tasks。
-      // ⚠️ 真实数据里两条任务（T-001/T-002）的 proj 都是 hermes-cockpit，而 14 个项目里没有这个 slug——
-      //    只按 slug 过滤会让它们在任何项目视图下都看不见，用户会以为任务丢了。
-      //    所以这里分两组：本项目任务 + 全部未归属任务（后者始终带出来，标明来源）。
-      const hit = (data.orphan_tasks || []).filter(t => t.project === selected.slug)
-      const rest = (data.orphan_tasks || []).filter(t => t.project !== selected.slug)
-      return { tasks: hit, orphans: rest, title: '任务', orphan: hit.length > 0 }
+      // Project tasks: the backend lists tasks whose slug is absent from the
+      // project table under orphan_tasks.
+      // Real data has T-001/T-002 with proj=hermes-cockpit, a slug that is not
+      // among the 14 projects — filtering by slug alone hides them from every
+      // project view and the user concludes their tasks are gone.
+      // So there are two groups here: this project's tasks, plus all unassigned
+      // tasks (the latter always rendered, labelled with their source).
+      const hit = (data.orphan_tasks || []).filter(x => x.project === selected.slug)
+      const rest = (data.orphan_tasks || []).filter(x => x.project !== selected.slug)
+      return { tasks: hit, orphans: rest, title: t('right.tasks'), orphan: hit.length > 0 }
     }
-    return { tasks: [], orphans: data.orphan_tasks || [], title: '未归属任务', orphan: true }
-  }, [data, selected])
+    return { tasks: [], orphans: data.orphan_tasks || [], title: t('right.orphanTasks'), orphan: true }
+  }, [data, selected, t])
 
   const onToggle = useCallback(async (task, s) => {
-    // 并发戳来自 /overview 的 stamp（(lstat, sha256) 二元组）。
-    // 不带它后端一律 428 拒绝盲写；带错了 409 stale → postJSON 会提示并自动刷新。
+    // The concurrency stamp comes from /overview's `stamp` ((lstat, sha256)).
+    // Without it the backend refuses blind writes with 428; a wrong one yields
+    // 409 stale, and postJSON notifies and auto-reloads.
     const stamp = data && data.stamp
     const r = await postJSON('/tasks/toggle', {
       id: task.id,
       subtask_id: s.id,
       done: !s.done,
       expect_mtime: stamp
-    }, reload)
+    }, reload, t)
     if (r.ok) {
       reload()
     } else if (r.code === 428) {
-      host.notify({ kind: 'error', message: '缺少文件戳：/overview 没下发 stamp，无法安全写入' })
+      host.notify({ kind: 'error', message: t('right.missingStamp') })
     }
-  }, [data, reload])
+  }, [data, reload, t])
 
   return jsxs('div', {
     className: 'flex h-full w-[20rem] shrink-0 flex-col overflow-y-auto px-2 py-2',
@@ -622,7 +936,7 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
             className: 'mb-2 shrink-0 rounded px-2 py-1.5 text-[0.6875rem]',
             style: { backgroundColor: 'rgba(217,83,79,0.12)', color: 'var(--ui-text-secondary)' },
             children: [
-              jsx('div', { style: { color: WARN }, children: '兼容性提示' }),
+              jsx('div', { style: { color: WARN }, children: t('right.compatWarning') }),
               warnings.map((w, i) => jsx('div', { className: 'mt-0.5', children: w }, `w-${i}`))
             ]
           })
@@ -640,7 +954,7 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
             ? jsx('div', {
                 className: 'text-[0.625rem]',
                 style: { color: 'var(--ui-text-quaternary)' },
-                children: 'slug 不匹配项目'
+                children: t('right.slugMismatch')
               })
             : null
         ]
@@ -649,14 +963,15 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
       view.tasks.length === 0
         ? (view.orphans.length
             ? null
-            : jsx(Empty, { children: '这里没有任务' }))
+            : jsx(Empty, { children: t('right.empty') }))
         : jsx('div', {
             className: 'flex flex-col gap-2',
-            children: view.tasks.map(t => jsx(TaskCard, { t, readonly, onToggle }, t.id))
+            children: view.tasks.map(task => jsx(TaskCard, { task, readonly, onToggle, t, tr: t }, task.id))
           }),
 
-      // 未归属任务：proj 的 slug 不在项目表里。必须始终可见 ——
-      // 否则这些任务在任何项目视图下都不出现，用户会以为任务丢了。
+      // Unassigned tasks: proj's slug is not in the project table. These must
+      // always be visible — otherwise they vanish from every project view and
+      // the user concludes their tasks are gone.
       view.orphans && view.orphans.length
         ? jsxs('div', {
             className: 'mt-2 flex flex-col gap-2',
@@ -667,18 +982,18 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
                   jsx('div', {
                     className: 'text-[0.6875rem] font-medium',
                     style: { color: 'var(--ui-text-secondary)' },
-                    children: `未归属任务 · ${view.orphans.length}`
+                    children: `${t('right.orphanTasks')} · ${view.orphans.length}`
                   }),
                   jsx('div', {
                     className: 'text-[0.625rem]',
                     style: { color: 'var(--ui-text-quaternary)' },
-                    children: 'proj 不在项目表'
+                    children: t('right.orphanHint')
                   })
                 ]
               }),
               jsx('div', {
                 className: 'flex flex-col gap-2',
-                children: view.orphans.map(t => jsx(TaskCard, { t, readonly, onToggle }, t.id))
+                children: view.orphans.map(task => jsx(TaskCard, { task, readonly, onToggle, t, tr: t }, task.id))
               })
             ]
           })
@@ -687,19 +1002,20 @@ function RightCol({ data, selected, readonly, reload, warnings }) {
   })
 }
 
-// ── 主页面：顶部总览条 + 三栏 ──────────────────────────────────────────────
+// ── main view: overview bar + three columns ────────────────────────────────
 
 /**
- * 首启引导卡片（缺陷 3 / GAP-01）。
+ * First-run onboarding card (defect 3 / GAP-01).
  *
- * 后端 `POST /setup/init` 早就能用，但前端只有一个「只读（引导未完成）」提示，
- * **没有任何操作能完成引导** → D12 决策不可达，用户看到灰按钮却无路可走。
- * 这里给两个按钮：文案固定（任务书要求，不许自由发挥）。
+ * `POST /setup/init` already worked, but the UI only showed a
+ * "read-only (onboarding incomplete)" hint with NO action that could finish
+ * onboarding — decision D12 was unreachable. These two buttons close that gap.
  *
- * 失败分支复用 postJSON 的既有语义（409 stale 自动刷新 / 403 原样透出原因），
- * 不另写一套判断——两套判断迟早会打架。
+ * Failure handling reuses postJSON's existing semantics (409 stale auto-
+ * reloads, 403 surfaces the backend reason verbatim) instead of a second set
+ * of checks — two sets always drift apart eventually.
  */
-function SetupCard({ setup, reload }) {
+function SetupCard({ setup, reload, t = DEFAULT_T }) {
   const [busy, setBusy] = useState(null)
   const [msg, setMsg] = useState(null)
 
@@ -707,15 +1023,16 @@ function SetupCard({ setup, reload }) {
     if (busy) return
     setBusy(mode)
     setMsg(null)
-    const r = await postJSON('/setup/init', { mode }, reload)
+    const r = await postJSON('/setup/init', { mode }, reload, t)
     setBusy(null)
     if (r.ok) {
-      reload()                                  // 成功后重取，界面自己会切出只读态
+      reload()                                  // refetch on success; the view leaves read-only itself
       return
     }
-    // 409 stale 已在 postJSON 里提示 + 自动 reload；这里只补一条不重复的说明
+    // postJSON already notified and reloaded on 409 stale; only add a
+    // non-duplicating note here.
     setMsg(r.code === 409 && r.reason === 'stale'
-      ? '引导状态已被改动，正在刷新…'
+      ? t('setup.changed')
       : r.message)
   }
 
@@ -740,18 +1057,18 @@ function SetupCard({ setup, reload }) {
       jsx('div', {
         className: 'text-sm',
         style: { color: 'var(--ui-text-primary)' },
-        children: '项目中枢还没初始化'
+        children: t('setup.title')
       }),
       jsx('div', {
         className: 'text-xs',
         style: { color: 'var(--ui-text-quaternary)' },
-        children: `当前引导状态：${(setup && setup.status) || 'pending'}。选择一种方式开始（选定后不可反向切换）。`
+        children: t('setup.body', { status: (setup && setup.status) || 'pending' })
       }),
       jsxs('div', {
         className: 'flex gap-2',
         children: [
-          btn('fresh', '🆕 从零开始'),
-          btn('imported', '📥 导入已有')
+          btn('fresh', t('setup.fresh')),
+          btn('imported', t('setup.imported'))
         ]
       }),
       msg ? jsx('div', { className: 'text-xs', style: { color: WARN }, children: msg }) : null
@@ -759,15 +1076,17 @@ function SetupCard({ setup, reload }) {
   })
 }
 
-function Cockpit({ readonly }) {
-  const { data, err, reload } = useOverview(POLL_MS)
+function Cockpit({ readonly, t = DEFAULT_T }) {
+  const { data, err, reload } = useOverview(POLL_MS, t)
   const [selected, setSelected] = useState(null)
   const firstPick = useRef(false)
 
-  // 首帧默认落在会话数最多的项目上，第一版必须一眼看到东西。
+  // First paint defaults to the project with the most sessions: the first
+  // version has to show something at a glance.
   //
-  // 双保险：effect 负责常规路径；下面 render 时再兜一次，
-  // 因为实测只靠 effect 会停在 selected=null，首屏一个写入口都不渲染。
+  // Belt and braces: the effect covers the normal path, and the render-time
+  // fallback below covers the case where the effect alone leaves
+  // selected=null, which measured as "no write entry point on first paint".
   useEffect(() => {
     if (firstPick.current || !data || !data.projects) return
     firstPick.current = true
@@ -778,7 +1097,8 @@ function Cockpit({ readonly }) {
     if (best) setSelected({ kind: 'project', slug: best.slug, path: best.path })
   }, [data])
 
-  // 兜底：数据已在但还没选中 → 本次渲染用同一个规则临时定一个
+  // Fallback: data arrived but nothing is selected yet — pick one for this
+  // render using the same rule.
   const autoPick =
     selected ||
     (data && data.projects && data.projects.length
@@ -794,7 +1114,7 @@ function Cockpit({ readonly }) {
     return jsxs('div', {
       className: 'flex h-full flex-col gap-1 p-4 text-xs',
       children: [
-        jsx('div', { style: { color: 'var(--ui-text-secondary)' }, children: '读不到项目中枢数据' }),
+        jsx('div', { style: { color: 'var(--ui-text-secondary)' }, children: t('common.loadFailed') }),
         jsx('div', { style: { color: 'var(--ui-text-quaternary)' }, children: err })
       ]
     })
@@ -803,29 +1123,31 @@ function Cockpit({ readonly }) {
     return jsx('div', {
       className: 'p-4 text-xs',
       style: { color: 'var(--ui-text-quaternary)' },
-      children: '加载中…'
+      children: t('common.loading')
     })
   }
 
   const stats = data.stats || {}
   const warnings = data.warnings || []
   const projects = data.projects || []
-  // C5/S8：引导未完成（setup.status !== 'done'）→ 后端会 409 scope_blocked，
-  // 界面必须同步进只读态，不能等用户点了才失败。
+  // C5/S8: onboarding incomplete (setup.status !== 'done') makes the backend
+  // answer 409 scope_blocked, so the view must go read-only up front instead
+  // of failing only once the user clicks.
   const isReadonly = Boolean(readonly) || Boolean(data.setup && data.setup.status !== 'done')
 
-  // 缺陷 3 / GAP-01：引导未完成时**给界面一个真正的入口**。
-  // 只把三栏画成灰的，用户没有任何操作能完成引导 → D12 决策不可达。
+  // Defect 3 / GAP-01: when onboarding is incomplete the view needs a REAL
+  // entry point. Greying out the columns left the user with no way to finish
+  // onboarding, making decision D12 unreachable.
   if (data.setup && data.setup.status !== 'done') {
-    return jsx(SetupCard, { setup: data.setup, reload })
+    return jsx(SetupCard, { setup: data.setup, reload, t })
   }
 
   const head = [
-    `${stats.projects || 0} 项目`,
-    `${stats.sessions || 0} 会话`,
-    `${stats.tasks || 0} 任务`,
-    `${stats.boards || 0} 看板`,
-    `${stats.unassigned_sessions || 0} 未归属`
+    t('stat.projects', { n: stats.projects || 0 }),
+    t('stat.sessions', { n: stats.sessions || 0 }),
+    t('stat.tasks', { n: stats.tasks || 0 }),
+    t('stat.boards', { n: stats.boards || 0 }),
+    t('stat.unassigned', { n: stats.unassigned_sessions || 0 })
   ]
 
   return jsxs('div', {
@@ -835,9 +1157,9 @@ function Cockpit({ readonly }) {
         className: 'flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-[0.6875rem]',
         style: { borderColor: 'var(--ui-stroke-secondary)', color: 'var(--ui-text-tertiary)' },
         children: [
-          jsx('span', { style: { color: 'var(--ui-text-primary)' }, children: '项目中枢' }),
+          jsx('span', { style: { color: 'var(--ui-text-primary)' }, children: t('plugin.name') }),
           jsx('span', { style: { color: 'var(--ui-text-quaternary)' }, children: head.join(' · ') }),
-          isReadonly ? jsx('span', { style: { color: WARN }, children: '· 只读（引导未完成）' }) : null,
+          isReadonly ? jsx('span', { style: { color: WARN }, children: t('common.readonlyBadge') }) : null,
           err ? jsx('span', { style: { color: WARN }, children: `· ${err}` }) : null
         ]
       }),
@@ -845,25 +1167,25 @@ function Cockpit({ readonly }) {
       jsxs('div', {
         className: 'flex min-h-0 flex-1 overflow-hidden',
         children: [
-          jsx(LeftCol, { data, selected: eff, onSelect: setSelected, stats }),
-          jsx(MidCol, { data, selected: eff, readonly: isReadonly, reload, projects }),
-          jsx(RightCol, { data, selected: eff, readonly: isReadonly, reload, warnings })
+          jsx(LeftCol, { data, selected: eff, onSelect: setSelected, stats, t }),
+          jsx(MidCol, { data, selected: eff, readonly: isReadonly, reload, projects, t }),
+          jsx(RightCol, { data, selected: eff, readonly: isReadonly, reload, warnings, t })
         ]
       })
     ]
   })
 }
 
-function CockpitPage() {
-  return jsx('div', { className: 'h-full', children: jsx(Cockpit, {}) })
+function CockpitPage({ t = DEFAULT_T }) {
+  return jsx('div', { className: 'h-full', children: jsx(Cockpit, { t }) })
 }
 
-function CockpitChip() {
-  const { data } = useOverview(8000)
+function CockpitChip({ t = DEFAULT_T }) {
+  const { data } = useOverview(8000, t)
   const st = (data && data.stats) || {}
   const bad = (st.orphan_tasks || 0) > 0
   return jsx(Tip, {
-    label: '项目中枢',
+    label: t('plugin.name'),
     children: jsxs('button', {
       type: 'button',
       className: cn('inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem]',
@@ -882,59 +1204,91 @@ function CockpitChip() {
 
 export default {
   id: ID,
-  name: '项目中枢',
+  // Read by the host at registration time, before any locale context exists,
+  // so it cannot be localized here (and `id` must stay the ASCII slug because
+  // the host derives the API mount path from the manifest). The sidebar and
+  // palette labels come from `plugin.name` via `t` instead, re-registered in
+  // `register` when the locale changes.
+  name: 'Project Hub',
   defaultEnabled: true,
   register(ctx) {
-    // ⚠️ 这里**不再**注册 `area: 'panes'` 的右栏视图。
-    // 三栏（项目/会话/任务）的最小可用宽度约 900px，塞进右侧 520px 栏里必然与
-    // todo-panel、文件树互相挤压，实测表现为「点开看不到数据」——页面没坏，是被压没了。
-    // 全宽视图由 ③ 路由页（/cockpit）承担，从侧栏入口 ④ 进入。
-    // 若将来要恢复右栏形态，请另写一个宽度自适应的精简组件，不要复用三栏 Cockpit。
+    // No `area: 'panes'` registration on purpose.
+    // The three columns need ~900px; squeezed into the 520px right rail they
+    // fight todo-panel and the file tree and the user ends up seeing nothing —
+    // the page was never broken, it was compressed away. The full-width view
+    // is the /cockpit route reached from the sidebar entry below.
+    // To bring back a right-rail form, write a separate width-aware compact
+    // component; do not reuse the three-column Cockpit here.
 
-    // ① 状态栏小胶囊
+    // Locale bundles: ctx.i18n.t resolves against the host's active locale,
+    // so every label below follows the app's UI language automatically.
+    if (ctx.i18n && typeof ctx.i18n.register === 'function') {
+      ctx.i18n.register(MESSAGES)
+    }
+    const t = makeTranslator(ctx.i18n)
+
+    // ① status-bar chip — its text is rendered by React on every tick, so it
+    //    re-reads `t` on its own and needs no re-registration.
     ctx.register({
       id: 'cockpit-chip',
       area: 'statusBar.right',
-      render: () => jsx(CockpitChip, {})
+      render: () => jsx(CockpitChip, { t })
     })
 
-    // ③ 独立页面（三栏主视图）
+    // ② full-width route page (the three-column main view)
     ctx.register({
       id: 'cockpit-page',
       area: ROUTES_AREA,
       data: { path: '/cockpit' },
-      render: () => jsx(CockpitPage, {})
+      render: () => jsx(CockpitPage, { t })
     })
 
-    // ④ 侧栏入口
-    ctx.register({
-      id: 'cockpit-nav',
-      area: SIDEBAR_NAV_AREA,
-      data: { path: '/cockpit', label: '项目中枢', codicon: 'project' }
-    })
+    // ③ sidebar entry + ④ command palette — their labels are read ONCE by the
+    //    host at registration time, so a contributor registered in English
+    //    stays English after the user switches the UI language. The host's
+    //    hook for this is ctx.i18n.onLocaleChange: dispose the contribution and
+    //    register it again with the new `t`. (Built-in plugins do exactly this
+    //    — see apps/desktop/src/plugins/kanban/plugin.tsx registerLabels.)
+    const navContribs = (tr) => [
+      {
+        id: 'cockpit-nav',
+        area: SIDEBAR_NAV_AREA,
+        data: { path: '/cockpit', label: tr('plugin.name'), codicon: 'project' }
+      },
+      {
+        id: 'cockpit-cmd',
+        area: PALETTE_AREA,
+        data: { label: tr('plugin.open'), run: () => host.navigate('/cockpit') }
+      }
+    ]
 
-    // ⑤ ⌘K 命令
-    ctx.register({
-      id: 'cockpit-cmd',
-      area: PALETTE_AREA,
-      data: { label: '打开项目中枢', run: () => host.navigate('/cockpit') }
-    })
+    let disposeLabels = ctx.registerMany(navContribs(t))
+    if (ctx.i18n && typeof ctx.i18n.onLocaleChange === 'function') {
+      ctx.i18n.onLocaleChange(() => {
+        // Rebuild the translator too: the old one closed over the previous
+        // locale. Disposing first keeps the host from showing two entries.
+        if (typeof disposeLabels === 'function') disposeLabels()
+        disposeLabels = ctx.registerMany(navContribs(makeTranslator(ctx.i18n)))
+      })
+    }
   }
 }
 
 /**
- * 自测钩子（__check.mjs 用）。
+ * Test hook for __check.mjs.
  *
- * 宿主只读 `export default`，这个具名导出不会挡任何东西；
- * 它把写操作入口暴露出来，好让自测喂真 409 / 403 / 200 响应验语义
- * （409 必须 reload、403 必须透出原因、200 必须零误报）。
+ * The host only reads `export default`, so a named export here shadows
+ * nothing; it exposes the write entry point so the self-test can feed real
+ * 409 / 403 / 200 responses and assert the semantics (409 must reload, 403
+ * must surface the reason verbatim, 200 must not reload).
  */
 export const __writeProbe = { postJSON }
 
 /**
- * 自测钩子（__check.mjs 用）：引导卡片。
+ * Test hook for __check.mjs: the onboarding card.
  *
- * 缺陷 3 的验收点是「引导未完成时界面里真的有两个按钮能发 setup/init」，
- * 而 render() 出来的只是一棵普通对象树，断言可以直接在树上做。
+ * The acceptance point is "onboarding incomplete renders two buttons that
+ * really POST setup/init", and render() yields a plain object tree the test
+ * can assert on directly.
  */
-export const __setupProbe = { SetupCard, LABELS: ['🆕 从零开始', '📥 导入已有'] }
+export const __setupProbe = { SetupCard }

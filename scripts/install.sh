@@ -71,7 +71,32 @@ fi
 # 3) 桌面插件
 say "③ 同步桌面插件"
 run "mkdir -p '$DESK_DST'"
-run "cp '$DESK_SRC/plugin.js' '$DESK_DST/'"
+# The desktop side is a SINGLE-FILE target: the host's runtime loader refuses
+# any import outside its SDK map ("unsupported import: ./i18n.js — runtime
+# plugins may only import @hermes/plugin-sdk and react"), because plugin source
+# is evaluated as a blob URL with nothing to resolve a relative path against.
+# Sources therefore live in src/ and get inlined by build.mjs; only the built
+# plugin.js is installed. Installing a source file would reproduce exactly the
+# failure above, and it surfaces as "plugin failed to load" with the sidebar
+# entry simply missing.
+if [ "$DRY" = 1 ]; then
+  say "  [dry] node build.mjs && cp plugin.js -> $DESK_DST"
+else
+  say "  (build single-file bundle)"
+  ( cd "$REPO/desktop-plugins/project-hub" && node build.mjs ) || { say "  ❌ 构建失败"; exit 1; }
+  run "cp '$DESK_SRC/plugin.js' '$DESK_DST/'"
+  # cp is additive, not a mirror: drop host-side .js the source no longer has
+  # (a stale module here is imported instead of the fresh one).
+  run "for f in '$DESK_DST'/*.js; do [ -e \"\$f\" ] || continue; b=\$(basename \"\$f\"); [ -e '$DESK_SRC'/\"\$b\" ] || { say \"  清除宿主残留 \$b\"; rm -f \"\$f\"; }; done"
+  # No unmanaged .js may survive next to the bundle: the loader would trip on
+  # any relative import it contains.
+  EXTRA="$(cd "$DESK_DST" && ls *.js 2>/dev/null | grep -v '^plugin\.js$' || true)"
+  if [ -n "$EXTRA" ]; then
+    say "  ❌ 宿主目录里有多余模块：$EXTRA（只应有一个自足 plugin.js）"
+    exit 1
+  fi
+  say "  ✓ 桌面入口：plugin.js ($(wc -c < "$DESK_DST/plugin.js") bytes)"
+fi
 
 # 4) 启用（CLI 认的名字是 plugin.yaml 的 name，不是目录名 —— 这是实测踩过的坑）
 say "④ 启用插件"

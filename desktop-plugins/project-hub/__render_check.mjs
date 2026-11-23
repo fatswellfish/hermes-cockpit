@@ -11,6 +11,12 @@ import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+// Bundles live with the sources; the built plugin.js has them inlined.
+import { MESSAGES } from './src/i18n.js'
+
+// Assertions read their expected copy from the bundle, so this suite stays
+// language-agnostic instead of pinning one locale.
+const EN = MESSAGES.en
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN = path.join(HERE, 'plugin.js')
@@ -135,7 +141,13 @@ register(pathToFileURL(loaderFile))
 
 const mod = await import(pathToFileURL(PLUGIN).href)
 const regs = []
-mod.default.register({ register: e => regs.push(e) })
+mod.default.register({
+  register: (e) => { regs.push(e); return () => {} },
+  registerMany: (es) => {
+    es.forEach((e) => regs.push(e))
+    return () => {}
+  }
+})
 
 const page = regs.find(r => r.area === 'routes')
 
@@ -184,10 +196,10 @@ await check('首帧渲染不抛异常（此时应为「加载中…」）', () =
   const out = page.render()
   if (out === undefined) throw new Error('render 返回 undefined')
   const texts = collectText(out, [])
-  if (!texts.join('').includes('加载中')) {
-    throw new Error(`首帧不是加载态，实际：${texts.join(' | ').slice(0, 200)}`)
+  if (!texts.join('').includes(EN['common.loading'])) {
+    throw new Error(`首帧不是加载态，实际：${texts.join(' ').slice(0, 120)}`)
   }
-  return '加载中…'
+  return EN['common.loading']
 })
 
 // ── 把渲染树摊平，检查真的画出了数据 ─────────────────────────────────────
@@ -218,7 +230,12 @@ await check('数据到位后真的取到数（fetch 被调用）', () => {
 
 await check('顶部总览条显示真实计数', () => {
   const st = DATA.stats
-  const want = [`${st.projects} 项目`, `${st.sessions} 会话`, `${st.tasks} 任务`, `${st.boards} 看板`]
+  const want = [
+    EN['stat.projects'].replace('{n}', st.projects),
+    EN['stat.sessions'].replace('{n}', st.sessions),
+    EN['stat.tasks'].replace('{n}', st.tasks),
+    EN['stat.boards'].replace('{n}', st.boards)
+  ]
   const missing = want.filter(w => !blob.includes(w))
   if (missing.length) throw new Error(`缺：${missing.join(', ')}\n实际文本样例：${blob.slice(0, 500)}`)
   return want.join(' · ')
@@ -232,7 +249,7 @@ await check('左栏列出全部项目名', () => {
 })
 
 await check('左栏显示未归属会话条数', () => {
-  const want = `${DATA.stats.unassigned_sessions} 会话`
+  const want = EN['col.sessions'].replace('{n}', DATA.stats.unassigned_sessions)
   if (!blob.includes(want)) throw new Error(`找不到「${want}」\n样例：${blob.slice(0, 400)}`)
   return want
 })
@@ -301,7 +318,7 @@ await check('只读态：setup 未完成时只出现引导入口，写按钮不�
     if (n.props) walk(n.props.children)
   })(pendingTree)
 
-  const LABELS = ['🆕 从零开始', '📥 导入已有']
+  const LABELS = [EN['setup.fresh'], EN['setup.imported']]
   const labels = btns.map(b => String(b.children ?? ''))
   const missing = LABELS.filter(l => !labels.some(x => x.includes(l)))
   if (missing.length) {
