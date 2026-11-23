@@ -451,15 +451,23 @@ def overview(root: str | os.PathLike | None = None,
     # 界面必须单列，否则用户以为任务丢了。project 为空的同样算未归属。
     orphan_tasks = [t for t in tasks if (t.get("project") or "") not in known_slugs]
 
+    def _task_row(t: dict) -> dict:
+        return {"id": t["id"], "title": t.get("title"),
+                "status": t.get("status"), "progress": t.get("progress"),
+                "project": t.get("project"), "blocker": t.get("blocker"),
+                "session": t.get("session"), "source": t.get("source"),
+                "source_file": t.get("source_file"),
+                "subtasks": t.get("subtasks") or []}
+
     return {
         "projects": out_projects,
         "unassigned_sessions": unassigned,
         "assigned_sessions": assigned_sessions,
-        "orphan_tasks": [{"id": t["id"], "title": t.get("title"),
-                          "status": t.get("status"), "progress": t.get("progress"),
-                          "project": t.get("project"), "blocker": t.get("blocker"),
-                          "subtasks": t.get("subtasks") or []}
-                         for t in orphan_tasks],
+        # 树要三级：项目 → 会话 → 任务。前端切到某个会话时要拿到「这个会话引出的
+        # 任务」，而这些任务大多不属于未归属列表（它们的 slug 是有效项目），
+        # 所以必须单独下发全量任务行。session 字段是级联的关键列。
+        "tasks": [_task_row(t) for t in tasks],
+        "orphan_tasks": [_task_row(t) for t in orphan_tasks],
         "stats": {
             "projects": len(projects),
             "sessions": len(sessions),

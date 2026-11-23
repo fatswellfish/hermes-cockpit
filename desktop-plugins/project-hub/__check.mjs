@@ -96,7 +96,7 @@ const CONST_STUBS = {
 
 /** 每个模块要导出的名字（函数型 + 常量型）。 */
 const MODULE_EXPORTS = {
-  '@hermes/plugin-sdk': ['host', 'cn', 'useValue', 'Tip', 'SIDEBAR_NAV_AREA', 'PALETTE_AREA', 'ROUTES_AREA', 'PANES_AREA'],
+  '@hermes/plugin-sdk': ['host', 'cn', 'useValue', 'atom', 'Tip', 'SIDEBAR_NAV_AREA', 'PALETTE_AREA', 'ROUTES_AREA', 'PANES_AREA'],
   react: ['useState', 'useEffect', 'useLayoutEffect', 'useCallback', 'useRef', 'useMemo', 'createContext', 'useContext'],
   'react/jsx-runtime': ['jsx', 'jsxs', 'Fragment']
 }
@@ -116,6 +116,18 @@ for (const name of MODULE_EXPORTS['@hermes/plugin-sdk']) {
   SDK_SPEC[name] = fnSource(name) || JSON.stringify(CONST_STUBS['@hermes/plugin-sdk'][name])
 }
 SDK_SPEC['STATUSBAR_AREAS'] = JSON.stringify({ left: 'statusBar.left', right: 'statusBar.right' })
+
+// atom(): a minimal nanostore — get/set/subscribe. Components read it through
+// useValue, which the stub resolves by calling the atom if it is a function;
+// here it is an object, so useValue must handle it explicitly.
+SDK_SPEC['atom'] = `(function (init) {
+  var v = init, subs = []
+  return {
+    get: function () { return v },
+    set: function (n) { v = (typeof n === 'function') ? n(v) : n; for (var i = 0; i < subs.length; i++) subs[i](v) },
+    subscribe: function (f) { subs.push(f); return function () {} }
+  }
+})`
 
 const REACT_SPEC = {}
 for (const name of MODULE_EXPORTS.react) REACT_SPEC[name] = fnSource(name)
@@ -214,11 +226,16 @@ try {
 
 const def = mod && mod.default
 const called = { register: [], notify: [], navigate: [], openSession: [] }
+const stored = {}
 // Mirror the host context (contrib/plugin.ts): both register and registerMany
 // exist, and registerMany returns a disposer. A stub missing registerMany makes
 // a correct plugin look broken.
 const ctx = {
   register: (e) => { called.register.push(e); return () => {} },
+  // Settings page + plugin-scoped storage: the host has both, so the stub
+  // must too — otherwise a correct plugin looks broken to the self-test.
+  registerSettingsPage: (p) => { called.register.push(Object.assign({ area: 'settings.plugins' }, p)); return () => {} },
+  storage: { get: (k, d) => (k in stored ? stored[k] : d), set: (k, v) => { stored[k] = v }, remove: (k) => { delete stored[k] } },
   registerMany: (es) => {
     es.forEach((e) => called.register.push(e))
     return () => {}
@@ -447,6 +464,52 @@ if (def) {
 // ── 汇总 ──────────────────────────────────────────────────────────────────
 
 try { unlinkSync(loaderFile) } catch (e) { /* 已删 */ }
+
+// ── settings page ────────────────────────────────────────────────────────
+// The SDK is explicit that plugin preferences belong in Settings -> Plugins and
+// nowhere else. These assertions pin that: the page must be registered through
+// ctx.registerSettingsPage, and a chosen value must reach ctx.storage.
+await check('设置页通过官方 registerSettingsPage 注册', () => {
+  const page = called.register.find(e => e.area === 'settings.plugins')
+  if (!page) throw new Error('没调用 ctx.registerSettingsPage —— 设置项没有官方归属地')
+  if (!page.render) throw new Error('设置页没有 render')
+  return `id=${page.id}`
+})
+
+await check('设置页能渲染出刷新间隔选项', () => {
+  const page = called.register.find(e => e.area === 'settings.plugins')
+  const Comp = mod && mod.__settingsProbe && mod.__settingsProbe.SettingsPage
+  if (typeof Comp !== 'function') throw new Error('拿不到 SettingsPage 组件')
+  const out = Comp({ t: k => k, settings: {}, setSettings: () => {}, storage: { set: () => {} } })
+  const flat = JSON.stringify(out)
+  for (const sec of [2, 4, 8, 15, 30]) {
+    if (!flat.includes(`"data-refresh":"${sec}"`)) throw new Error(`缺少 ${sec} 秒选项`)
+  }
+  return '5 档刷新间隔都在'
+})
+
+await check('设置页改值会写进 ctx.storage', () => {
+  const Comp = mod && mod.__settingsProbe && mod.__settingsProbe.SettingsPage
+  if (typeof Comp !== 'function') throw new Error('拿不到 SettingsPage 组件')
+  let wrote = null
+  const out = Comp({ t: k => k, settings: {}, setSettings: (n) => { wrote = n }, storage: { set: (k, v) => { if (k === 'settings') wrote = v } } })
+  let clicked = false
+  const walk = (n) => {
+    if (!n || typeof n !== 'object' || clicked) return
+    if (n.props && n.props['data-refresh'] === '8' && typeof n.props.onClick === 'function') {
+      n.props.onClick()
+      clicked = true
+      return
+    }
+    const kids = [].concat((n.props && n.props.children) || [], n.children || [])
+    for (const c of kids) walk(c)
+  }
+  walk(out)
+  if (!clicked) throw new Error('没找到 8 秒选项的 onClick')
+  if (!wrote) throw new Error('点了选项却没有把设置写出去')
+  if (wrote.refreshSeconds !== 8) throw new Error(`写入值不对：${JSON.stringify(wrote)}`)
+  return `写入 ${JSON.stringify(wrote)}`
+})
 
 const pass = results.filter(r => r.ok).length
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.note ? '  — ' + r.note : ''}`)

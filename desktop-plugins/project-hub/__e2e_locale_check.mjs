@@ -41,6 +41,12 @@ writeFileSync(files.sdk, `
 export const host = { notify: () => {}, navigate: () => {}, openSession: () => {} }
 export const Tip = p => ({ type: 'Tip', props: p })
 export const cn = (...a) => a.filter(Boolean).join(' ')
+export const atom = init => { let v = init; const subs = []; return {
+  get: () => v,
+  set: n => { v = typeof n === 'function' ? n(v) : n; subs.forEach(f => f(v)) },
+  subscribe: f => { subs.push(f); return () => {} }
+} }
+export const useValue = x => (x && typeof x.get === 'function' ? x.get() : x)
 export const SIDEBAR_NAV_AREA = 'sidebar.nav'
 export const PALETTE_AREA = 'palette'
 export const ROUTES_AREA = 'routes'

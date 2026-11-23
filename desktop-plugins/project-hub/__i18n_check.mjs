@@ -40,6 +40,19 @@ for (const c of ['software', 'media', 'infra', 'agent', 'knowledge', 'other']) u
 // keys passed as a variable: t(cat) where cat came from projectCategoryKey
 used.add('category.other')
 
+// The settings page feeds t() a variable key (row() takes a labelKey/hintKey),
+// so a literal-only scan cannot see them. Enumerate the settings keys explicitly
+// instead of loosening the check — a typo in one of these names is exactly what
+// check ② is here to catch.
+for (const k of ['settings.title', 'settings.intro', 'settings.refresh',
+  'settings.refreshHint', 'settings.seconds', 'settings.confirmWrites',
+  'settings.confirmHint', 'settings.dataSource']) used.add(k)
+used.add('common.on')
+used.add('common.off')
+
+// Hint strings live in a title= prop, which the t('...') scan does not see.
+for (const k of ['right.expandHint', 'right.collapseHint', 'mid.moreHint']) used.add(k)
+
 await check('② plugin.js 用到的每个 key 都有定义', () => {
   const missing = [...used].filter(k => !(k in MESSAGES.en)).sort()
   assert(missing.length === 0, `未定义：${missing.join(', ')}`)

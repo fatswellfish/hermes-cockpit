@@ -75,6 +75,11 @@ const SOURCES = {
   '@hermes/plugin-sdk':
     'export const host = ' + HOST_SRC + ';' +
     'export const cn = function () { return Array.prototype.filter.call(arguments, Boolean).join(" ") };' +
+    'export const atom = function (init) { var v = init; var subs = []; ' +
+    'return { get: function () { return v }, ' +
+    'set: function (n) { v = typeof n === "function" ? n(v) : n; ' +
+    'subs.forEach(function (f) { f(v) }) }, ' +
+    'subscribe: function (f) { subs.push(f); return function () {} } } };' +
     'export const useValue = function (x) { return typeof x === "function" ? x() : x };' +
     'export const Tip = function (p) { return { __el: "Tip", props: p || {} } };' +
     'export const SIDEBAR_NAV_AREA = "sidebarNav"; export const PALETTE_AREA = "palette";' +
@@ -143,6 +148,8 @@ const mod = await import(pathToFileURL(PLUGIN).href)
 const regs = []
 mod.default.register({
   register: (e) => { regs.push(e); return () => {} },
+  registerSettingsPage: (p) => { regs.push(Object.assign({ area: 'settings.plugins' }, p)); return () => {} },
+  storage: { get: (k, d) => d, set: () => {}, remove: () => {} },
   registerMany: (es) => {
     es.forEach((e) => regs.push(e))
     return () => {}

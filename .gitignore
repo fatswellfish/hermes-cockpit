@@ -19,3 +19,12 @@ TASKS.agent.md
 TASKS.work.md
 TASKS.home.md
 
+
+# 测试运行时生成的桩文件，不入库
+desktop-plugins/*/__*.mjs
+!desktop-plugins/project-hub/__check.mjs
+!desktop-plugins/project-hub/__render_check.mjs
+!desktop-plugins/project-hub/__i18n_check.mjs
+!desktop-plugins/project-hub/__zh_check.mjs
+!desktop-plugins/project-hub/__e2e_locale_check.mjs
+!desktop-plugins/project-hub/__cascade_check.mjs

@@ -16,7 +16,7 @@
  * active locale, so this file must never contain a display string literal.
  */
 
-import { host, Tip, cn, SIDEBAR_NAV_AREA, PALETTE_AREA, ROUTES_AREA } from '@hermes/plugin-sdk'
+import { host, Tip, cn, atom, useValue, SIDEBAR_NAV_AREA, PALETTE_AREA, ROUTES_AREA } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 /**
@@ -103,13 +103,26 @@ const MESSAGES = {
     'mid.classify': 'Classify',
     'mid.classifyHint': 'Attach this session to a project (writes META.yaml only, never touches cwd)',
     'mid.more': '{rest} more, click to show {step} more',
+    'mid.moreHint': 'Load the next batch of sessions',
     'mid.classifiedTo': 'Classified to {slug}',
     'mid.openFailed': 'Failed to open session: {error}',
     'mid.untitled': '(untitled session)',
 
     // right column / tasks
     'right.tasks': 'Tasks',
+    'right.sessionTasks': "This session's tasks",
     'right.orphanTasks': 'Unassigned tasks',
+    'right.expandHint': 'Show subtasks',
+    'right.collapseHint': 'Hide subtasks',
+    // settings page (Settings -> Plugins)
+    'settings.title': 'Project Hub settings',
+    'settings.intro': 'Where the cockpit gets its data, and how often it refreshes.',
+    'settings.refresh': 'Refresh interval',
+    'settings.refreshHint': 'How often the cockpit re-reads projects, sessions and tasks.',
+    'settings.seconds': '{n}s',
+    'settings.confirmWrites': 'Confirm before ticking',
+    'settings.confirmHint': 'Ask for confirmation before a subtask is marked done.',
+    'settings.dataSource': 'Task files read by this plugin:',
     'right.orphanHint': 'proj not in project table',
     'right.slugMismatch': 'slug does not match project',
     'right.empty': 'No tasks here',
@@ -135,6 +148,8 @@ const MESSAGES = {
     'common.loadFailed': 'Could not load project hub data',
     'common.readonlyBadge': '· read-only (onboarding incomplete)',
     'common.readonlyTip': 'Read-only (onboarding incomplete) — writes disabled',
+    'common.on': 'On',
+    'common.off': 'Off',
 
     // plugin identity (sidebar / palette / status chip)
     'plugin.name': 'Project Hub',
@@ -183,12 +198,25 @@ const MESSAGES = {
     'mid.classify': '归类',
     'mid.classifyHint': '把该会话归到某个项目（只写 META.yaml，不改 cwd）',
     'mid.more': '还有 {rest} 条，点击多显示 {step} 条',
+    'mid.moreHint': '再加载一批会话',
     'mid.classifiedTo': '已归类到 {slug}',
     'mid.openFailed': '打开会话失败：{error}',
     'mid.untitled': '（无标题会话）',
 
     'right.tasks': '任务',
+    'right.sessionTasks': '本会话引出的 todo',
     'right.orphanTasks': '未归属任务',
+    'right.expandHint': '展开看子步骤',
+    'right.collapseHint': '收起子步骤',
+    // 设置页（设置 → 插件）
+    'settings.title': '项目中枢设置',
+    'settings.intro': '这里控制中枢从哪里取数、多久刷新一次。',
+    'settings.refresh': '刷新间隔',
+    'settings.refreshHint': '中枢多久重新读一次项目、会话和任务。',
+    'settings.seconds': '{n} 秒',
+    'settings.confirmWrites': '勾选前先确认',
+    'settings.confirmHint': '把子任务标记为完成之前，先弹确认。',
+    'settings.dataSource': '本插件读取的任务文件：',
     'right.orphanHint': 'proj 不在项目表',
     'right.slugMismatch': 'slug 不匹配项目',
     'right.empty': '这里没有任务',
@@ -211,6 +239,8 @@ const MESSAGES = {
     'common.loadFailed': '读不到项目中枢数据',
     'common.readonlyBadge': '· 只读（引导未完成）',
     'common.readonlyTip': '只读模式（引导未完成）— 写操作已禁用',
+    'common.on': '开',
+    'common.off': '关',
 
     'plugin.name': '项目中枢',
     'plugin.open': '打开项目中枢'
@@ -642,7 +672,7 @@ function fmtTime(epoch) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function MidCol({ data, selected, readonly, reload, projects, t = DEFAULT_T }) {
+function MidCol({ data, selected, readonly, reload, projects, onSelect, t = DEFAULT_T }) {
   const [limit, setLimit] = useState(SESSION_PAGE)
   const [picking, setPicking] = useState(null)      // session id currently being classified
 
@@ -658,7 +688,15 @@ function MidCol({ data, selected, readonly, reload, projects, t = DEFAULT_T }) {
       const l = data.unassigned_sessions || []
       return { list: l, total: l.length, title: t('mid.unassignedSessions') }
     }
-    const l = (data.assigned_sessions || []).filter(s => s.project === selected.slug)
+    // A selected session must keep its project's sibling list in this column:
+    // otherwise clicking a session empties the middle column and the user can
+    // neither go back nor see the other sessions. Map session -> project here.
+    const slug = selected.kind === 'session' ? selected.project : selected.slug
+    if (!slug) {
+      const all = (data.assigned_sessions || []).concat(data.unassigned_sessions || [])
+      return { list: all, total: all.length, title: t('mid.allSessions') }
+    }
+    const l = (data.assigned_sessions || []).filter(s => s.project === slug)
     return { list: l, total: l.length, title: t('mid.sessions') }
   }, [data, selected, t])
 
@@ -729,7 +767,7 @@ function MidCol({ data, selected, readonly, reload, projects, t = DEFAULT_T }) {
                 children: [
                   jsxs('div', {
                     className: 'min-w-0 flex-1 cursor-pointer',
-                    onClick: () => openSession(s.id),
+                    onClick: () => { onSelect({ kind: 'session', id: s.id, project: s.project, path: selected && selected.path }); openSession(s.id) },
                     children: [
                       jsx('div', {
                         className: 'truncate text-[0.75rem]',
@@ -789,6 +827,7 @@ function MidCol({ data, selected, readonly, reload, projects, t = DEFAULT_T }) {
             children: jsx('button', {
               type: 'button',
               className: 'text-[0.6875rem] text-(--ui-text-quaternary) hover:text-foreground',
+              title: t('mid.moreHint'),
               onClick: () => setLimit(v => v + SESSION_PAGE * 4),
               children: t('mid.more', { rest: view.total - limit, step: SESSION_PAGE * 4 })
             })
@@ -843,6 +882,7 @@ function TaskCard({ task, readonly, onToggle, t = DEFAULT_T, tr = DEFAULT_T }) {
           }),
           jsxs('div', {
             className: 'min-w-0 flex-1 cursor-pointer',
+            title: t(open ? 'right.collapseHint' : 'right.expandHint'),
             onClick: () => setOpen(v => !v),
             children: [
               jsx('div', {
@@ -894,20 +934,49 @@ function TaskCard({ task, readonly, onToggle, t = DEFAULT_T, tr = DEFAULT_T }) {
 
 function RightCol({ data, selected, readonly, reload, warnings, t = DEFAULT_T }) {
   const view = useMemo(() => {
-    if (!data) return { tasks: [], orphans: [], title: t('right.tasks'), orphan: false }
-    if (selected && selected.kind === 'project') {
-      // Project tasks: the backend lists tasks whose slug is absent from the
-      // project table under orphan_tasks.
-      // Real data has T-001/T-002 with proj=hermes-cockpit, a slug that is not
-      // among the 14 projects — filtering by slug alone hides them from every
-      // project view and the user concludes their tasks are gone.
-      // So there are two groups here: this project's tasks, plus all unassigned
-      // tasks (the latter always rendered, labelled with their source).
-      const hit = (data.orphan_tasks || []).filter(x => x.project === selected.slug)
-      const rest = (data.orphan_tasks || []).filter(x => x.project !== selected.slug)
-      return { tasks: hit, orphans: rest, title: t('right.tasks'), orphan: hit.length > 0 }
+    if (!data) return { tasks: [], orphans: [], title: t('right.tasks'), orphan: false, scope: 'none' }
+    const all = data.tasks || []
+
+    // Three states, matching the project -> session -> todo cascade:
+    //   project  a project is selected -> every task in it (all sessions) plus
+    //            the unassigned ones, which are always shown
+    //   session  a session is selected -> only the tasks that session raised,
+    //            which is the third level of the cascade
+    //   none     nothing selected      -> unassigned tasks
+    //
+    // Session matching is exact: a task stores the full session id and the UI
+    // row carries the same one. An earlier version only filtered by slug, so
+    // clicking a session left this column unchanged and the per-session tasks
+    // could not be reached at all.
+    if (selected && selected.kind === 'session') {
+      const sid = selected.id
+      const hit = all.filter(x => x.session && x.session === sid)
+      // Tasks with no session id fall back to their project (established rule).
+      const fallback = selected.project
+        ? all.filter(x => (!x.session) && x.project === selected.project)
+        : []
+      return {
+        tasks: hit.concat(fallback),
+        orphans: [],
+        title: t('right.sessionTasks'),
+        orphan: false,
+        scope: 'session'
+      }
     }
-    return { tasks: [], orphans: data.orphan_tasks || [], title: t('right.orphanTasks'), orphan: true }
+
+    if (selected && selected.kind === 'project') {
+      const hit = all.filter(x => x.project === selected.slug)
+      // Unassigned tasks always show, even while a project is selected: real
+      // data has tasks carrying a session but no proj (their session cwd is the
+      // home directory, so no project claims them). Filtering them out here made
+      // every task vanish from the UI and the user thought the list was lost.
+      const ownIds = {}
+      for (const x of hit) ownIds[x.id] = true
+      const rest = (data.orphan_tasks || []).filter(x => !ownIds[x.id])
+      return { tasks: hit, orphans: rest, title: t('right.tasks'), orphan: false, scope: 'project' }
+    }
+
+    return { tasks: [], orphans: data.orphan_tasks || [], title: t('right.orphanTasks'), orphan: true, scope: 'none' }
   }, [data, selected, t])
 
   const onToggle = useCallback(async (task, s) => {
@@ -1076,6 +1145,103 @@ function SetupCard({ setup, reload, t = DEFAULT_T }) {
   })
 }
 
+/**
+ * Settings page — the one official home for plugin preferences.
+ *
+ * The SDK is explicit about this: "Don't build a preferences dialog, pane, or
+ * sidebar row for settings." Settings → Plugins is where a desktop plugin is
+ * allowed to put its own knobs, so this component is registered through
+ * ctx.registerSettingsPage and never linked from the cockpit view.
+ *
+ * Two knobs, both persisted through ctx.storage (namespaced hermes.plugin.<id>.*):
+ *   · refreshSeconds — poll interval for /overview (default 4s)
+ *   · confirmWrites  — ask before ticking a subtask (default off)
+ */
+function SettingsPage({ t = DEFAULT_T, settings, setSettings, storage }) {
+  const cur = settings || {}
+  const secs = cur.refreshSeconds || Math.round(POLL_MS / 1000)
+  const confirmWrites = cur.confirmWrites === true
+
+  const save = (patch) => {
+    const next = Object.assign({}, cur, patch)
+    setSettings(next)
+    try {
+      if (storage && typeof storage.set === 'function') storage.set('settings', next)
+    } catch (e) {
+      // Storage is best-effort: a failed write must not break the settings page.
+    }
+  }
+
+  const row = (labelKey, hintKey, control) => jsxs('div', {
+    className: 'flex items-start justify-between gap-4 border-b border-(--ui-border) py-3',
+    children: [
+      jsxs('div', {
+        className: 'min-w-0',
+        children: [
+          jsx('div', { className: 'text-[0.8125rem] font-medium', children: t(labelKey) }),
+          jsx('div', {
+            className: 'mt-0.5 text-[0.75rem]',
+            style: { color: 'var(--ui-text-tertiary)' },
+            children: t(hintKey)
+          })
+        ]
+      }),
+      jsx('div', { className: 'shrink-0', children: control })
+    ]
+  })
+
+  const choices = [2, 4, 8, 15, 30]
+  const secBtn = (s) => {
+    const on = secs === s
+    return jsx('button', {
+      type: 'button',
+      'data-refresh': String(s),
+      onClick: () => save({ refreshSeconds: s }),
+      className: cn(
+        'rounded px-2 py-1 text-[0.75rem]',
+        on ? 'bg-(--ui-bg-selected)' : 'hover:bg-(--chrome-action-hover)'
+      ),
+      style: { color: on ? 'var(--ui-text-primary)' : 'var(--ui-text-tertiary)' },
+      children: t('settings.seconds', { n: s })
+    })
+  }
+
+  const toggle = jsx('button', {
+    type: 'button',
+    'data-confirm-writes': confirmWrites ? 'on' : 'off',
+    onClick: () => save({ confirmWrites: !confirmWrites }),
+    className: cn(
+      'rounded px-2 py-1 text-[0.75rem]',
+      confirmWrites ? 'bg-(--ui-bg-selected)' : 'hover:bg-(--chrome-action-hover)'
+    ),
+    style: { color: confirmWrites ? 'var(--ui-text-primary)' : 'var(--ui-text-tertiary)' },
+    children: confirmWrites ? t('common.on') : t('common.off')
+  })
+
+  return jsxs('div', {
+    className: 'flex max-w-2xl flex-col gap-1 p-4 text-sm',
+    children: [
+      jsx('div', { className: 'text-[0.9375rem] font-semibold', children: t('settings.title') }),
+      jsx('div', {
+        className: 'mb-2 text-[0.75rem]',
+        style: { color: 'var(--ui-text-tertiary)' },
+        children: t('settings.intro')
+      }),
+      row('settings.refresh', 'settings.refreshHint',
+        jsx('div', { className: 'flex gap-1', children: choices.map(secBtn) })),
+      row('settings.confirmWrites', 'settings.confirmHint', toggle),
+      jsxs('div', {
+        className: 'mt-3 rounded border border-(--ui-border) p-2 text-[0.6875rem]',
+        style: { color: 'var(--ui-text-quaternary)' },
+        children: [
+          jsx('div', { children: t('settings.dataSource') }),
+          jsx('code', { children: 'TASKS.agent.md · TASKS.work.md · TASKS.home.md' })
+        ]
+      })
+    ]
+  })
+}
+
 function Cockpit({ readonly, t = DEFAULT_T }) {
   const { data, err, reload } = useOverview(POLL_MS, t)
   const [selected, setSelected] = useState(null)
@@ -1168,7 +1334,7 @@ function Cockpit({ readonly, t = DEFAULT_T }) {
         className: 'flex min-h-0 flex-1 overflow-hidden',
         children: [
           jsx(LeftCol, { data, selected: eff, onSelect: setSelected, stats, t }),
-          jsx(MidCol, { data, selected: eff, readonly: isReadonly, reload, projects, t }),
+          jsx(MidCol, { data, selected: eff, readonly: isReadonly, reload, projects, onSelect: setSelected, t }),
           jsx(RightCol, { data, selected: eff, readonly: isReadonly, reload, warnings, t })
         ]
       })
@@ -1243,7 +1409,34 @@ export default {
       render: () => jsx(CockpitPage, { t })
     })
 
-    // ③ sidebar entry + ④ command palette — their labels are read ONCE by the
+    // ③ settings page — Settings → Plugins. The SDK forbids putting plugin
+    //    preferences anywhere else (no dialog, no pane, no sidebar row), so
+    //    this is the only correct home for the refresh interval and the
+    //    write-confirmation toggle. Read back through ctx.storage on load.
+    let savedSettings = {}
+    try {
+      if (ctx.storage && typeof ctx.storage.get === 'function') {
+        savedSettings = ctx.storage.get('settings', {}) || {}
+      }
+    } catch (e) {
+      savedSettings = {}
+    }
+    const settingsAtom = atom(savedSettings)
+    if (typeof ctx.registerSettingsPage === 'function') {
+      ctx.registerSettingsPage({
+        id: 'settings',
+        title: t('plugin.name'),
+        icon: 'settings-gear',
+        render: () => jsx(SettingsPage, {
+          t,
+          settings: useValue(settingsAtom),
+          setSettings: (next) => { settingsAtom.set(next) },
+          storage: ctx.storage
+        })
+      })
+    }
+
+    // ④ sidebar entry + ⑤ command palette — their labels are read ONCE by the
     //    host at registration time, so a contributor registered in English
     //    stays English after the user switches the UI language. The host's
     //    hook for this is ctx.i18n.onLocaleChange: dispose the contribution and
@@ -1292,3 +1485,13 @@ export const __writeProbe = { postJSON }
  * can assert on directly.
  */
 export const __setupProbe = { SetupCard }
+
+/**
+ * Test hook for __check.mjs: the settings page component.
+ *
+ * ctx.registerSettingsPage keeps render() as a closure, and the self-test's jsx
+ * stub drops the component reference from the element it builds, so the test
+ * cannot reach the component through the registry. Exporting it lets the suite
+ * call it directly and assert the real controls and the storage write.
+ */
+export const __settingsProbe = { SettingsPage }
