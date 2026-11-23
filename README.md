@@ -51,6 +51,9 @@ cp TASKS.example.md  TASKS.md
 bash scripts/install.sh
 ```
 
+> 忘了这两行 `cp` 的话，`__check.mjs` 会有一条 `⑥e … /overview 没下发 stamp` 失败——
+> 那是数据没准备好，不是代码坏了。复制模板后即 18/18。
+
 `install.sh` 会做四件事，最后一步是自检（`tasks > 0` 且 `stamp` 非空才返回 0）：
 
 1. 拷后端到 `<HERMES_HOME>/plugins/project-hub/`
